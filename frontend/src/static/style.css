@@ -1,0 +1,436 @@
+/* Design System Tokens - Strict Monochromatic Engineering Aesthetics */
+:root {
+    --bg-main: #000000;
+    --bg-panel: #0c0c0c;
+    --border-thin: 1px solid #222222;
+    --text-primary: #ffffff;
+    --text-secondary: #71717a;
+    --text-muted: #3f3f46;
+
+    --font-heading: 'Space Grotesk', sans-serif;
+    --font-mono: 'SF Mono', 'Courier New', monospace;
+    
+    --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Reset & Global */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: var(--font-heading);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    user-select: none;
+}
+
+/* Canvas Viewport (100% Fullscreen) */
+.canvas-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+    background-color: #000000;
+    overflow: hidden;
+}
+
+#mapCanvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+}
+
+/* Floating Elements Shared */
+.font-mono {
+    font-family: var(--font-mono);
+}
+
+/* Floating Top-Left Header */
+.floating-header {
+    position: absolute;
+    top: 32px;
+    left: 32px;
+    z-index: 100;
+    pointer-events: none;
+}
+
+.floating-header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--text-primary);
+}
+
+.baseline-tag {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    margin-top: 4px;
+    letter-spacing: 0.1em;
+}
+
+/* Floating Top-Right Controls */
+.floating-controls {
+    position: absolute;
+    top: 32px;
+    right: 32px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end;
+}
+
+.hud-label {
+    font-family: var(--font-mono);
+    font-size: 8px;
+    color: var(--text-muted);
+    letter-spacing: 0.12em;
+    font-weight: bold;
+}
+
+.pill-row {
+    display: flex;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.85);
+    border: var(--border-thin);
+    padding: 3px;
+    border-radius: 6px;
+    backdrop-filter: blur(10px);
+}
+
+.pill-btn, .pill-toggle {
+    font-family: var(--font-heading);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-secondary);
+    transition: var(--transition-fast);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pill-btn:hover {
+    color: var(--text-primary);
+}
+
+.pill-btn.active {
+    background: #ffffff;
+    color: #000000;
+}
+
+/* Checkbox Toggle Styling inside Pill */
+.pill-toggle input {
+    display: none;
+}
+
+.pill-toggle span {
+    transition: var(--transition-fast);
+}
+
+.pill-toggle:has(input:checked) {
+    background: #ffffff;
+    color: #000000;
+    border-radius: 4px;
+}
+
+/* Floating Bottom-Left HUD Metrics */
+.floating-hud-metrics {
+    position: absolute;
+    bottom: 32px;
+    left: 32px;
+    z-index: 100;
+    background: rgba(12, 12, 12, 0.9);
+    border: var(--border-thin);
+    padding: 16px;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 160px;
+    backdrop-filter: blur(10px);
+}
+
+.hud-metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+}
+
+.hud-metric-row .lbl {
+    color: var(--text-secondary);
+    font-size: 9px;
+}
+
+.hud-metric-row .val {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* Bottom-Left Mini Radial Gauge */
+.hud-mini-radial-container {
+    position: absolute;
+    top: 50%;
+    right: 16px;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    display: none; /* Can be enabled on demand or left positioned next to HUD */
+}
+
+.gauge-ring {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+}
+
+.gauge-bg {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.05);
+    stroke-width: 1px;
+}
+
+.gauge-fill {
+    fill: none;
+    stroke: #ffffff;
+    stroke-width: 1px;
+    stroke-dasharray: 113; /* 2 * PI * 18 */
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset 0.8s ease;
+}
+
+/* Floating Bottom-Center Mini Drag Banner */
+.floating-drop-banner {
+    position: absolute;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    background: rgba(12, 12, 12, 0.9);
+    border: var(--border-thin);
+    padding: 6px 16px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    backdrop-filter: blur(10px);
+}
+
+.banner-text {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
+.banner-btn {
+    font-family: var(--font-heading);
+    font-size: 9px;
+    font-weight: 700;
+    background: #ffffff;
+    color: #000000;
+    border: none;
+    padding: 4px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.banner-btn:hover {
+    background: #dddddd;
+}
+
+/* Floating Bottom-Right Presets */
+.floating-presets {
+    position: absolute;
+    bottom: 32px;
+    right: 32px;
+    z-index: 100;
+}
+
+.preset-pill-row {
+    display: flex;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.85);
+    border: var(--border-thin);
+    padding: 3px;
+    border-radius: 6px;
+    backdrop-filter: blur(10px);
+}
+
+.preset-btn {
+    font-family: var(--font-heading);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-secondary);
+    transition: var(--transition-fast);
+}
+
+.preset-btn:hover {
+    color: var(--text-primary);
+}
+
+.preset-btn.active {
+    background: #ffffff;
+    color: #000000;
+}
+
+.reset-btn {
+    border-left: 1px solid #222222 !important;
+    border-radius: 0 !important;
+    color: #ef4444;
+}
+
+.reset-btn:hover {
+    background: #ef4444 !important;
+    color: #ffffff !important;
+    border-radius: 4px !important;
+}
+
+/* Dynamic Floating Tooltip at Cursor/Node */
+.floating-tooltip {
+    position: absolute;
+    z-index: 200;
+    background: #070707;
+    border: var(--border-thin);
+    padding: 12px;
+    border-radius: 4px;
+    width: 200px;
+    pointer-events: none;
+    display: none; /* Controller by JS mapping */
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
+}
+
+.floating-tooltip h4 {
+    font-size: 9px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+    border-bottom: var(--border-thin);
+    padding-bottom: 4px;
+}
+
+.inspect-kv {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    margin-bottom: 5px;
+}
+
+.inspect-kv .lbl {
+    color: var(--text-secondary);
+}
+
+.inspect-kv .val {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.badge {
+    padding: 1px 4px;
+    border-radius: 2px;
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.badge-normal {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+}
+
+.badge-blocked {
+    background: #ffffff;
+    color: #000000;
+}
+
+/* Loading Overlay - Minimal monochrome style */
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.95);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.loading-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.spinner {
+    width: 24px;
+    height: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    border-top-color: #ffffff;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 16px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.loading-overlay h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+
+.loading-step {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+
+.progress-bar-container {
+    width: 160px;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: #ffffff;
+    transition: width 0.3s ease;
+}

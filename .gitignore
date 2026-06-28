@@ -1,0 +1,59 @@
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Distribution / Packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Geospatial Model Weights & Dataset Directories
+data/
+backend/weights/
+*.pth
+*.ckpt
+*.pb
+*.pickle
+*.p
+*.h5
+
+# OS / Editor Caches
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Python runtime bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Inference Outputs and Logs
+output/
+tmp/
+*.log
+*.tif
+*.tiff

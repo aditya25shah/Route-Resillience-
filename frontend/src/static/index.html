@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Route Resilience System</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=SF+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Immersive Fullscreen Canvas Wrapper -->
+    <div class="canvas-wrapper" id="canvasWrapper">
+        <canvas id="mapCanvas"></canvas>
+
+        <!-- Loading Overlay -->
+        <div class="loading-overlay" id="loadingOverlay">
+            <div class="spinner"></div>
+            <h3>GTE Inference Active</h3>
+            <p class="loading-step" id="loadingStep">Decoding network topology...</p>
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="progressBarFill"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Top-Left Brand Overlay -->
+    <header class="floating-header">
+        <h1>ROUTE RESILIENCE</h1>
+        <p class="baseline-tag">BASELINE: SAT2GRAPH (ECCV 2020)</p>
+    </header>
+
+    <!-- Floating Top-Right Controller HUD -->
+    <div class="floating-controls">
+        <!-- Mode Pills -->
+        <div class="control-group">
+            <span class="hud-label">MODE</span>
+            <div class="pill-row">
+                <button class="pill-btn active" id="btnInspect">INSPECT</button>
+                <button class="pill-btn" id="btnBlock">BLOCK NODE</button>
+                <button class="pill-btn" id="btnRoute">ROUTE PLANNER</button>
+            </div>
+        </div>
+
+        <!-- Layer Toggles -->
+        <div class="control-group">
+            <span class="hud-label">LAYERS</span>
+            <div class="pill-row">
+                <label class="pill-toggle">
+                    <input type="checkbox" id="chkSatellite" checked>
+                    <span>SATELLITE</span>
+                </label>
+                <label class="pill-toggle">
+                    <input type="checkbox" id="chkMask" checked>
+                    <span>GTE TENSOR MASK</span>
+                </label>
+                <label class="pill-toggle">
+                    <input type="checkbox" id="chkGraph" checked>
+                    <span>EXTRACTED GRAPH</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Floating Bottom-Center Mini Drag and Drop Banner -->
+    <div class="floating-drop-banner" id="dropzone">
+        <span class="banner-text">DROP SATELLITE TILE TO INFER OR CLICK TO BROWSE</span>
+        <button class="banner-btn" onclick="document.getElementById('fileInput').click()">BROWSE</button>
+        <input type="file" id="fileInput" accept="image/*" style="display: none;">
+    </div>
+
+    <!-- Floating Bottom-Right Active Controls (Clear, City Presets) -->
+    <div class="floating-presets">
+        <div class="preset-pill-row">
+            <button class="preset-btn active" data-preset="sf">SF GRID</button>
+            <button class="preset-btn" data-preset="boston">BOSTON ORGANIC</button>
+            <button class="preset-btn" data-preset="newyork">NY ORTHOGONAL</button>
+            <button class="preset-btn reset-btn" id="btnClearBlocks">CLEAR BLOCKS</button>
+        </div>
+    </div>
+
+    <!-- Floating Monochromatic Dynamic Tooltip -->
+    <div class="floating-tooltip" id="telemetryTooltip">
+        <h4 id="tooltipTitle">ELEMENT STATS</h4>
+        <div id="tooltipContent">
+            <!-- Rendered dynamically on click -->
+        </div>
+    </div>
+
+    <script src="app.js" defer></script>
+</body>
+</html>

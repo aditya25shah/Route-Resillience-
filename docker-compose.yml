@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  route-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: route-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount host data checkpoint directory to container
+      - ./data:/app/data
+    environment:
+      - WEIGHTS_PATH=/app/data/20citiesModel/model.ckpt
+      - CUDA_VISIBLE_DEVICES=0
+    # To enable Nvidia GPU acceleration, uncomment the deploy block below:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+
+  route-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: route-frontend
+    ports:
+      - "8080:8080"
+    environment:
+      - BACKEND_URL=http://route-backend:8000
+    depends_on:
+      - route-backend
+    restart: unless-stopped

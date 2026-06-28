@@ -1,0 +1,18 @@
+# Ignore checkpoints and datasets during build context transfer
+weights/
+*.pth
+*.ckpt
+*.pb
+*.pickle
+*.p
+*.h5
+
+# Ignore caches and local python configs
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.idea/
+.vscode/

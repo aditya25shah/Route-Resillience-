@@ -1,0 +1,14 @@
+# Ignore assets and local packages
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.idea/
+.vscode/
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
