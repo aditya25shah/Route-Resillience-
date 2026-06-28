@@ -1,8 +1,8 @@
-# Tell GitHub Linguist to treat .p pickle dataset files as vendored/binary
-*.p linguist-vendored
-*.pickle linguist-vendored
+# Force GitHub Linguist to completely ignore .p pickle datasets in language statistics
+*.p -linguist-detectable
+*.pickle -linguist-detectable
 
-# Ignore preset image assets in statistics
-*.png linguist-vendored
-*.jpg linguist-vendored
-*.gif linguist-vendored
+# Exclude image/gif folders from stats
+*.png -linguist-detectable
+*.jpg -linguist-detectable
+*.gif -linguist-detectable
