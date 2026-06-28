@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 import base64
 from io import BytesIO
@@ -35,14 +35,8 @@ class CoordinateNode(BaseModel):
     name: Optional[str] = ""
 
 class LinkEdge(BaseModel):
-    from_node: int # pydantic fields mapping 'from' as python reserved keyword
-    to_node: int
-
-    class Config:
-        fields = {
-            'from_node': 'from',
-            'to_node': 'to'
-        }
+    from_node: int = Field(..., alias="from")
+    to_node: int = Field(..., alias="to")
 
 class ResilienceRequest(BaseModel):
     nodes: List[dict]
