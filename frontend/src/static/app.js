@@ -196,11 +196,9 @@ function triggerInferencePipeline(imgDataSrc) {
     }
     if (systemStatus) systemStatus.textContent = "Running live inference...";
     
-    // Fine-line radar spinner
     const spinner = document.querySelector(".spinner");
     if (spinner) spinner.style.display = "block";
     
-    // Simulate pipeline stages using timeouts while request runs in background
     let stageTimer = setTimeout(() => {
         if (isLoading && loadingStep) {
             loadingStep.textContent = "Stage 2: EXECUTING SAT2GRAPH INFERENCE...";
@@ -224,17 +222,16 @@ function triggerInferencePipeline(imgDataSrc) {
         isLoading = false;
         clearTimeout(stageTimer);
         clearTimeout(stageTimer2);
+        
+        // FORCE IMMEDIATE STATE CLEARING: Drop loading overlay instantly on response headers arrival
+        if (loadingOverlay) loadingOverlay.classList.remove("active");
+        if (systemStatus) systemStatus.textContent = "Active - Live Extracted";
+        
         if (!response.ok) throw new Error("Inference execution failed");
         return response.json();
     })
     .then(data => {
-        if (progressBarFill) progressBarFill.style.width = "100%";
-        if (loadingStep) loadingStep.textContent = "Inference completed successfully.";
-        
-        setTimeout(() => {
-            if (loadingOverlay) loadingOverlay.classList.remove("active");
-            if (systemStatus) systemStatus.textContent = "Active - Live Extracted";
-            
+        try {
             activeGraph = {
                 stats: {
                     totalLen: data.metrics.total_len_km,
@@ -263,7 +260,9 @@ function triggerInferencePipeline(imgDataSrc) {
                 updateResilienceUI(data.metrics);
                 resizeCanvas();
             }
-        }, 300);
+        } catch (processingError) {
+            console.error("Geospatial vector parsing error:", processingError);
+        }
     })
     .catch(err => {
         isLoading = false;
@@ -271,7 +270,6 @@ function triggerInferencePipeline(imgDataSrc) {
         clearTimeout(stageTimer2);
         console.error(err);
         
-        // INTERCEPT TIMEOUT / FAILURE: Hide spinner and display clean white error message
         if (spinner) spinner.style.display = "none";
         if (loadingStep) {
             loadingStep.style.color = "#ffffff";
@@ -283,11 +281,10 @@ function triggerInferencePipeline(imgDataSrc) {
             progressBarFill.style.backgroundColor = "#ff0000";
         }
         if (systemStatus) systemStatus.textContent = "Inference Timeout";
+        if (loadingOverlay) loadingOverlay.classList.add("active"); // Show error overlay
         
-        // Let it persist for 6 seconds so user can read it, then reset
         setTimeout(() => {
             if (loadingOverlay) loadingOverlay.classList.remove("active");
-            // Reset styles for next attempt
             if (spinner) spinner.style.display = "block";
             if (loadingStep) {
                 loadingStep.style.color = "";
