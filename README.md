@@ -70,9 +70,16 @@ Spin up the backend and frontend services using Docker Compose:
 docker compose up --build -d
 ```
 
+#### Customizing Ports (Optional)
+If ports `9080` or `9000` are already in use on your system, you can easily change them without modifying code. Create a `.env` file in the root directory:
+```env
+FRONTEND_PORT=7080
+BACKEND_PORT=7000
+```
+
 During startup:
-*   `route-backend` will initialize, loading the model into GPU memory.
-*   `route-frontend` will execute a curl check loop (`http://route-backend:8000/health`) and block container boot until the backend is fully initialized and operational.
+*   `route-backend` will initialize, loading the model.
+*   `route-frontend` will execute a curl check loop (`http://route-backend:8000/health`) and block container boot until the backend is operational.
 
 ---
 
