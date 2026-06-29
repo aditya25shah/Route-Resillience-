@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from skimage.morphology import skeletonize
+import networkx as nx
 
 class SimpleGTEModel(nn.Module):
     """
@@ -57,22 +58,20 @@ class InferencePipeline:
         else:
             print(f"[INFO] Weights file not found at {weights_path}. Running real-time structural skeletonization pipeline.")
 
-    def run_inference(self, pil_image):
+    def run_inference(self, image):
         """
-        Runs real-time road topology extraction from PIL image.
-        Returns:
-            nodes (list): extracted road junctions.
-            edges (list): links between junctions.
+        Runs the full inference pipeline:
+        1. Resizes input and converts to numpy
+        2. Queries model or executesfallback structural filters
+        3. Decodes vertices and segments using strict mathematical thresholding and coordinates deduplication.
         """
-        # 1. Image preprocessing
-        img_np = np.array(pil_image)
+        img_np = np.array(image)
         if len(img_np.shape) == 2:
             img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB)
         elif img_np.shape[2] == 4:
             img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2RGB)
             
         h, w = img_np.shape[:2]
-        # Standardize input dimensions
         target_w, target_h = 800, 600
         img_resized = cv2.resize(img_np, (target_w, target_h))
         
@@ -82,35 +81,41 @@ class InferencePipeline:
                 tensor_in = torch.from_numpy(img_resized).permute(2, 0, 1).float().unsqueeze(0).to(self.device) / 255.0
                 with torch.no_grad():
                     edges_mask, nodes_mask = self.model(tensor_in)
-                mask_np = (edges_mask.squeeze(0).mean(dim=0).cpu().numpy() * 255).astype(np.uint8)
+                    
+                # Apply Edgeness Probability Threshold (threshold_edge = 0.45)
+                edges_mean = edges_mask.squeeze(0).mean(dim=0)
+                edges_binary = (edges_mean >= 0.45).float() * 255.0
+                mask_np = edges_binary.cpu().numpy().astype(np.uint8)
                 mask_resized = cv2.resize(mask_np, (target_w, target_h))
-                return self._extract_graph_from_mask(img_resized, mask_resized)
+                
+                # Rescale nodes_mask to CPU numpy array to pass as vertexness probability map
+                nodes_mean = nodes_mask.squeeze(0).mean(dim=0).cpu().numpy()
+                nodes_resized = cv2.resize(nodes_mean, (target_w, target_h))
+                
+                return self._extract_graph_from_mask(img_resized, mask_resized, vertex_prob_map=nodes_resized)
             except Exception as e:
                 print(f"[ERROR] Live PyTorch inference failure: {e}. Defaulting to dynamic structural mode.")
                 
         # 2. Dynamic structural skeletonization fallback pipeline
-        # Pre-filter to isolate linear road features (bilateral smoothing + thresholding)
         gray = cv2.cvtColor(img_resized, cv2.COLOR_RGB2GRAY)
         smoothed = cv2.bilateralFilter(gray, 9, 75, 75)
-        # Dynamic local thresholding (adaptive mean) to capture high contrast lanes
-        thresh = cv2.adaptiveThreshold(smoothed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 8)
+        thresh = cv2.adaptiveThreshold(smoothed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 8)
         
-        # Clean up binary mask
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        clean_mask = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        closed_mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, close_kernel)
+        open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        clean_mask = cv2.morphologyEx(closed_mask, cv2.MORPH_OPEN, open_kernel)
         
-        return self._extract_graph_from_mask(img_resized, clean_mask)
+        return self._extract_graph_from_mask(img_resized, clean_mask, vertex_prob_map=None)
 
-    def _extract_graph_from_mask(self, original_img, binary_mask):
+    def _extract_graph_from_mask(self, original_img, binary_mask, vertex_prob_map=None):
         """
         Parses binary GTE/structural segmentation masks to extract nodes and edges.
         """
-        # Convert mask to boolean and execute topological skeletonization (thinning)
         bool_mask = binary_mask > 127
         skeleton = skeletonize(bool_mask).astype(np.uint8) * 255
         
-        # Find junction points (pixels in skeleton with degree > 2)
-        # Using a 3x3 neighbor convolution scan
+        # Find junction points using neighbor count convolution
         kernel = np.array([[1, 1, 1],
                            [1, 0, 1],
                            [1, 1, 1]], dtype=np.uint8)
@@ -118,24 +123,24 @@ class InferencePipeline:
         skel_float = (skeleton > 0).astype(float)
         neighbor_count = cv2.filter2D(skel_float, -1, kernel) * skel_float
         
-        # Junctions: degree >= 3
         junction_y, junction_x = np.where(neighbor_count >= 3)
-        # Terminals (dead ends): degree == 1
         term_y, term_x = np.where(neighbor_count == 1)
         
         nodes_raw = list(zip(junction_x, junction_y)) + list(zip(term_x, term_y))
         
-        # Simplify nearby node points
+        # --- SPATIAL DEDUPLICATION: Grid-snap nodes within 15px radius ---
+        # Raw skeleton generates thousands of pixel-level junction points.
+        # Collapse nearby points into single representative nodes to keep
+        # the working set under ~1000 and prevent KDTree pair explosion.
         nodes = []
         node_id = 1
-        node_lookup = {} # maps coordinates to node_id
+        node_lookup = {}
         
         for pt in nodes_raw:
             x, y = int(pt[0]), int(pt[1])
-            # Check proximity to existing simplified nodes
             duplicate = False
             for n in nodes:
-                if math.hypot(n["x"] - x, n["y"] - y) < 25: # 25px threshold
+                if abs(n["x"] - x) < 8 and abs(n["y"] - y) < 8:
                     duplicate = True
                     node_lookup[(x, y)] = n["id"]
                     break
@@ -149,53 +154,42 @@ class InferencePipeline:
                 nodes.append(new_node)
                 node_lookup[(x, y)] = node_id
                 node_id += 1
-                
-        # Link simplified nodes by tracing skeleton paths
+            
+        # --- BOUNDED EDGE LINKING: MAX_RADIUS = 60px (300m at 5m/px) ---
+        MAX_RADIUS = 60.0
         edges = []
-        # Find all active coordinates in the skeleton
-        skel_pts = set(zip(*np.where(skeleton > 0)[::-1]))
-        
-        # Draw connections based on proximity and skeleton path tracing
-        for i in range(len(nodes)):
-            n1 = nodes[i]
-            for j in range(i + 1, len(nodes)):
+        if len(nodes) > 1:
+            from scipy.spatial import KDTree
+            coords = np.array([[n["x"], n["y"]] for n in nodes], dtype=float)
+            tree = KDTree(coords)
+            pairs = tree.query_pairs(r=MAX_RADIUS)
+            
+            # Dilate skeleton to allow 2px tolerance on line tracing
+            dilated_skel = cv2.dilate(skeleton, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+            
+            # Vectorized line trace check for candidate pairs
+            steps = 10
+            s_vals = np.linspace(0.1, 0.9, steps)
+            
+            for i, j in pairs:
+                n1 = nodes[i]
                 n2 = nodes[j]
-                dist = math.hypot(n1["x"] - n2["x"], n1["y"] - n2["y"])
                 
-                # If they are relatively close, verify connection
-                if dist < 180:
-                    # Look for skeleton pixels directly between them
-                    steps = 15
-                    hits = 0
-                    for s in range(1, steps):
-                        px = int(n1["x"] + (n2["x"] - n1["x"]) * (s / steps))
-                        py = int(n1["y"] + (n2["y"] - n1["y"]) * (s / steps))
-                        
-                        # Search 3x3 neighborhood in skeleton
-                        connected_local = False
-                        for dx in [-2, -1, 0, 1, 2]:
-                            for dy in [-2, -1, 0, 1, 2]:
-                                if (px+dx, py+dy) in skel_pts:
-                                    connected_local = True
-                                    break
-                        if connected_local:
-                            hits += 1
-                            
-                    # If high matching density, record as graph edge link
-                    if hits / steps > 0.65:
-                        edges.append({
-                            "from": n1["id"],
-                            "to": n2["id"]
-                        })
-                        
-        # Ensure at least some connectivity exists
-        if len(edges) == 0 and len(nodes) > 1:
-            # Fallback minimum spanning connection
-            for idx in range(len(nodes) - 1):
-                edges.append({
-                    "from": nodes[idx]["id"],
-                    "to": nodes[idx+1]["id"]
-                })
+                pxs = (n1["x"] + (n2["x"] - n1["x"]) * s_vals).astype(int)
+                pys = (n1["y"] + (n2["y"] - n1["y"]) * s_vals).astype(int)
                 
-        return nodes, edges
+                pxs = np.clip(pxs, 0, skeleton.shape[1] - 1)
+                pys = np.clip(pys, 0, skeleton.shape[0] - 1)
+                
+                hits = np.sum(dilated_skel[pys, pxs] > 0)
+                if (hits / steps) > 0.70:
+                    edges.append({
+                        "from": n1["id"],
+                        "to": n2["id"]
+                    })
+                
+        # Delegate post-processing cleanups to GraphEngine
+        from src.graph_engine import GraphEngine
+        return GraphEngine.clean_graph_topology(nodes, edges, vertex_prob_map)
+
 import math

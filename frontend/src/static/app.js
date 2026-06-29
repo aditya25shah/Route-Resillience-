@@ -1,17 +1,22 @@
-// Presets configuration metadata
-const PRESETS = {
-    sf: { imgUrl: "preset_sf.png" },
-    boston: { imgUrl: "preset_boston.png" },
-    newyork: { imgUrl: "preset_newyork.png" }
-};
+// Global App Viewport & Pan-Zoom State
+let zoomScale = 1.0;
+let panX = 0.0;
+let panY = 0.0;
+let isPanning = false;
+let startPanX = 0;
+let startPanY = 0;
+let hasPanned = false;
+let mouseDownX = 0;
+let mouseDownY = 0;
 
 // Global App State
-let activePreset = "sf";
 let blockedNodes = new Set();
 let currentMode = "inspect"; // inspect, block, route
 let routePoints = []; // Source and Target nodes for Route Planner
 let activeShortestPath = null; // Calculated by backend
+let activeRouteMeta = null; // Shortest path distance/complexity metadata
 let hoverNode = null;
+let hoverEdge = null; // Tracked for dynamic inline tooltips
 let customImageLoaded = false;
 let customImageSrc = null;
 
@@ -103,29 +108,62 @@ if (fileInput) {
     });
 }
 
-// Setup preset buttons
-document.querySelectorAll(".preset-btn").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-        const btnElem = e.currentTarget;
-        document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
-        btnElem.classList.add("active");
-        loadPreset(btnElem.getAttribute("data-preset"));
-    });
-});
-
 // Canvas Interaction Mouse Event Listeners
 canvas.addEventListener("mousemove", onMouseMove);
 canvas.addEventListener("click", onMouseClick);
 canvas.addEventListener("mouseleave", () => {
     hoverNode = null;
+    hoverEdge = null;
+    render();
+});
+
+// Panning Mouse Event Listeners
+canvas.addEventListener("mousedown", (e) => {
+    if (e.button === 0) { // Left-click drag pans empty space
+        isPanning = true;
+        startPanX = e.clientX - panX;
+        startPanY = e.clientY - panY;
+        mouseDownX = e.clientX;
+        mouseDownY = e.clientY;
+        hasPanned = false;
+    }
+});
+
+window.addEventListener("mouseup", (e) => {
+    if (isPanning) {
+        isPanning = false;
+        if (Math.hypot(e.clientX - mouseDownX, e.clientY - mouseDownY) > 5) {
+            hasPanned = true;
+        }
+    }
+});
+
+// Wheel zoom event listener
+canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const zoomFactor = 1.1;
+    const oldScale = zoomScale;
+    
+    if (e.deltaY < 0) {
+        zoomScale = Math.min(zoomScale * zoomFactor, 15.0); // max zoom 15x
+    } else {
+        zoomScale = Math.max(zoomScale / zoomFactor, 0.5); // min zoom 0.5x
+    }
+
+    // Centered zoom correction
+    panX = mouseX - (mouseX - panX) * (zoomScale / oldScale);
+    panY = mouseY - (mouseY - panY) * (zoomScale / oldScale);
+
     render();
 });
 
 // Initialize App
-preloadPresetImages();
-setTimeout(() => {
-    loadPreset("sf");
-}, 200);
+resizeCanvas();
+loadDynamicPresets();
 
 // Function definitions
 function resizeCanvas() {
@@ -138,47 +176,110 @@ function resizeCanvas() {
     render();
 }
 
-function loadPreset(key) {
-    customImageLoaded = false;
-    activePreset = key;
+function loadDynamicPresets() {
+    fetch("/api/presets")
+    .then(res => res.json())
+    .then(presets => {
+        const container = document.querySelector(".preset-pill-row");
+        if (!container) return;
+        
+        // Remove existing preset buttons (keep CLEAR BLOCKS button)
+        const clearBtn = document.getElementById("btnClearBlocks");
+        container.innerHTML = "";
+        
+        presets.forEach((preset, index) => {
+            const btn = document.createElement("button");
+            btn.className = "preset-btn" + (index === 0 ? " active" : "");
+            btn.setAttribute("data-preset", preset.id);
+            btn.textContent = preset.name;
+            btn.addEventListener("click", (e) => {
+                document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
+                btn.classList.add("active");
+                loadPreset(preset.id);
+            });
+            container.appendChild(btn);
+        });
+        
+        if (clearBtn) {
+            container.appendChild(clearBtn);
+        }
+        
+        if (presets.length > 0) {
+            loadPreset(presets[0].id);
+        }
+    })
+    .catch(err => {
+        console.error("Failed to load presets dynamically", err);
+    });
+}
+
+function loadPreset(presetId) {
     blockedNodes.clear();
     routePoints = [];
     activeShortestPath = null;
+    customImageLoaded = false;
+    customImageSrc = null;
     
     if (systemStatus) systemStatus.textContent = "Loading preset...";
     
-    // Draw loading overlay locally first
     if (loadingOverlay) loadingOverlay.classList.add("active");
     if (progressBarFill) progressBarFill.style.width = "20%";
-    if (loadingStep) loadingStep.textContent = "Loading preset city raster tiles...";
+    if (loadingStep) loadingStep.textContent = `Querying preset '${presetId}' inference...`;
     
-    const img = presetImages[key];
-    if (img && img.complete) {
-        processPresetInference(img);
-    } else {
-        const fallbackImg = new Image();
-        fallbackImg.src = PRESETS[key].imgUrl;
-        fallbackImg.onload = () => {
-            presetImages[key] = fallbackImg;
-            processPresetInference(fallbackImg);
-        };
-    }
-    
-    showPlaceholderDetail();
-}
-
-function processPresetInference(img) {
-    if (progressBarFill) progressBarFill.style.width = "40%";
-    if (loadingStep) loadingStep.textContent = "Encoding preset image base64...";
-    
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = img.width || 800;
-    tempCanvas.height = img.height || 600;
-    const tempCtx = tempCanvas.getContext("2d");
-    tempCtx.drawImage(img, 0, 0);
-    const dataUrl = tempCanvas.toDataURL("image/png");
-    
-    triggerInferencePipeline(dataUrl);
+    fetch("/api/presets/infer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preset_id: presetId })
+    })
+    .then(response => {
+        if (!response.ok) throw new Error("Preset inference failed");
+        return response.json();
+    })
+    .then(data => {
+        if (progressBarFill) progressBarFill.style.width = "100%";
+        if (loadingStep) loadingStep.textContent = "Inference completed.";
+        
+        setTimeout(() => {
+            if (loadingOverlay) loadingOverlay.classList.remove("active");
+            if (systemStatus) systemStatus.textContent = "Active - Preset Extracted";
+            
+            activeGraph = {
+                stats: {
+                    totalLen: data.metrics.total_len_km,
+                    nodes: data.metrics.active_nodes,
+                    edges: data.metrics.active_edges,
+                    avgLen: data.metrics.avg_len_km,
+                    redundancy: data.metrics.redundancy,
+                    resilience: data.metrics.resilience + "%",
+                    apls: Number(data.metrics.apls).toFixed(3)
+                },
+                apls: data.metrics.apls,
+                nodes: data.nodes,
+                edges: data.edges
+            };
+            
+            // Set preset image base64 directly as background image
+            customImageLoaded = true;
+            customImageSrc = new Image();
+            customImageSrc.src = data.image;
+            customImageSrc.onload = () => {
+                updateStatsDisplay();
+                updateResilienceUI(data.metrics);
+                // Reset pan-zoom
+                zoomScale = 1.0;
+                panX = 0;
+                panY = 0;
+                resizeCanvas();
+            };
+        }, 300);
+    })
+    .catch(err => {
+        console.error(err);
+        if (loadingStep) loadingStep.textContent = "Inference Error: " + err.message;
+        setTimeout(() => {
+            if (loadingOverlay) loadingOverlay.classList.remove("active");
+        }, 2000);
+    });
 }
 
 function updateStatsDisplay() {
@@ -274,6 +375,7 @@ function setMode(mode) {
     
     routePoints = [];
     activeShortestPath = null;
+    activeRouteMeta = null;
     showPlaceholderDetail();
     render();
 }
@@ -321,11 +423,61 @@ function calculateResilience() {
             
             if (currentMode === "route") {
                 showRouteDetail();
+                planRoute();
+            } else {
+                render();
             }
-            render();
         }
     })
     .catch(err => console.error("Error fetching resilience metrics:", err));
+}
+
+function planRoute() {
+    if (routePoints.length !== 2) {
+        activeShortestPath = null;
+        activeRouteMeta = null;
+        render();
+        return;
+    }
+    
+    const payload = {
+        origin_node_id: routePoints[0],
+        destination_node_id: routePoints[1],
+        nodes: activeGraph.nodes,
+        edges: activeGraph.edges,
+        blocked: Array.from(blockedNodes)
+    };
+    
+    fetch("/api/route/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    })
+    .then(response => {
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error("PathNotFound");
+            }
+            throw new Error("Route planning failed");
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            activeShortestPath = data.path;
+            activeRouteMeta = {
+                distance: data.distance_meters,
+                complexity: data.complexity
+            };
+            render();
+        }
+    })
+    .catch(err => {
+        console.error("Route planning error:", err);
+        activeShortestPath = null;
+        activeRouteMeta = null;
+        render();
+    });
 }
 
 function updateResilienceUI(metrics) {
@@ -353,6 +505,19 @@ function getDistanceBetweenNodes(n1Id, n2Id) {
     return Math.hypot(n1.x - n2.x, n1.y - n2.y);
 }
 
+// Helper to check if an edge is part of the computed shortest path
+function isEdgeInShortestPath(fromId, toId) {
+    if (!activeShortestPath || activeShortestPath.length < 2) return false;
+    for (let i = 0; i < activeShortestPath.length - 1; i++) {
+        const u = activeShortestPath[i];
+        const v = activeShortestPath[i+1];
+        if ((u === fromId && v === toId) || (u === toId && v === fromId)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Render loop
 function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -364,26 +529,27 @@ function render() {
     // 1. Draw Satellite Background
     if (showSat) {
         if (customImageLoaded && customImageSrc) {
-            ctx.drawImage(customImageSrc, 0, 0, canvas.width, canvas.height);
-        } else if (presetImages[activePreset]) {
-            ctx.drawImage(presetImages[activePreset], 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(customImageSrc, panX, panY, canvas.width * zoomScale, canvas.height * zoomScale);
         }
     } else {
         // Dark blueprint background
         ctx.fillStyle = "#000000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
-        // Grid pattern
+        // Grid pattern (relative to pan and zoom Scale)
         ctx.strokeStyle = "rgba(255, 255, 255, 0.02)";
         ctx.lineWidth = 1;
-        const gridSz = 40;
-        for (let x = 0; x < canvas.width; x += gridSz) {
+        const gridSz = 40 * zoomScale;
+        const startX = panX % gridSz;
+        const startY = panY % gridSz;
+        
+        for (let x = startX; x < canvas.width; x += gridSz) {
             ctx.beginPath();
             ctx.moveTo(x, 0);
             ctx.lineTo(x, canvas.height);
             ctx.stroke();
         }
-        for (let y = 0; y < canvas.height; y += gridSz) {
+        for (let y = startY; y < canvas.height; y += gridSz) {
             ctx.beginPath();
             ctx.moveTo(0, y);
             ctx.lineTo(canvas.width, y);
@@ -401,21 +567,19 @@ function render() {
             const n2 = activeGraph.nodes.find(n => n.id === e.to);
             if (!n1 || !n2) return;
             
-            // Scaled endpoints based on window resize
             const p1 = getScaledCoords(n1);
             const p2 = getScaledCoords(n2);
             
-            // Draw wide glowing pathway
             ctx.beginPath();
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
             ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
-            ctx.lineWidth = 14;
+            ctx.lineWidth = Math.max(3.0, 14 / Math.sqrt(zoomScale));
             ctx.lineCap = "round";
             ctx.stroke();
             
             ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-            ctx.lineWidth = 8;
+            ctx.lineWidth = Math.max(2.0, 8 / Math.sqrt(zoomScale));
             ctx.stroke();
         });
         ctx.restore();
@@ -423,6 +587,9 @@ function render() {
     
     // 3. Draw Extracted Graph Overlay
     if (showGraph) {
+        const edgeWidth = Math.max(0.5, 2 / Math.sqrt(zoomScale));
+        const routeActive = (currentMode === "route" && routePoints.length === 2 && activeShortestPath);
+        
         // Draw Edges
         activeGraph.edges.forEach(e => {
             const n1 = activeGraph.nodes.find(n => n.id === e.from);
@@ -436,22 +603,48 @@ function render() {
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
             
-            // Highlight connections if blocked
-            if (blockedNodes.has(e.from) || blockedNodes.has(e.to)) {
-                ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-                ctx.lineWidth = 2;
-                ctx.setLineDash([4, 4]);
+            let isHovered = (hoverEdge && hoverEdge.from === e.from && hoverEdge.to === e.to);
+            let onPath = routeActive && isEdgeInShortestPath(e.from, e.to);
+            
+            if (routeActive) {
+                if (onPath) {
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.lineWidth = edgeWidth * 2.5;
+                    ctx.setLineDash([]);
+                } else {
+                    // Muted background segment: slate-grey (#333333)
+                    ctx.strokeStyle = "#333333";
+                    ctx.lineWidth = edgeWidth;
+                    ctx.setLineDash([]);
+                }
             } else {
-                ctx.strokeStyle = "#ffffff";
-                ctx.lineWidth = 2;
-                ctx.setLineDash([]);
+                if (blockedNodes.has(e.from) || blockedNodes.has(e.to)) {
+                    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+                    ctx.lineWidth = edgeWidth;
+                    ctx.setLineDash([4, 4]);
+                } else if (isHovered) {
+                    ctx.save();
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.lineWidth = edgeWidth * 2.5;
+                    ctx.shadowColor = "#ffffff";
+                    ctx.shadowBlur = Math.max(2.0, 8 / Math.sqrt(zoomScale));
+                    ctx.setLineDash([]);
+                } else {
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.lineWidth = edgeWidth;
+                    ctx.setLineDash([]);
+                }
             }
+            
             ctx.stroke();
+            if (isHovered && !routeActive) {
+                ctx.restore();
+            }
         });
         ctx.setLineDash([]);
         
-        // Draw shortest path
-        if (currentMode === "route" && routePoints.length === 2 && activeShortestPath) {
+        // Draw thick glowing shortest path overlay line
+        if (routeActive) {
             ctx.save();
             ctx.beginPath();
             const startNode = activeGraph.nodes.find(n => n.id === activeShortestPath[0]);
@@ -465,44 +658,69 @@ function render() {
                         ctx.lineTo(pNode.x, pNode.y);
                     }
                 }
-                ctx.strokeStyle = "#ffffff";
-                ctx.lineWidth = 5;
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+                ctx.lineWidth = Math.max(2.0, 6 / Math.sqrt(zoomScale));
                 ctx.shadowColor = "#ffffff";
-                ctx.shadowBlur = 10;
+                ctx.shadowBlur = Math.max(4.0, 12 / Math.sqrt(zoomScale));
                 ctx.stroke();
             }
             ctx.restore();
         }
         
         // Draw Nodes
+        const innerRadius = Math.max(1.5, 6 / Math.sqrt(zoomScale));
+        const outerRadius = Math.max(3.0, 10 / Math.sqrt(zoomScale));
+        const outerLineWidth = Math.max(0.5, 1.5 / Math.sqrt(zoomScale));
+        
         activeGraph.nodes.forEach(node => {
             const p = getScaledCoords(node);
             
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 6, 0, 2 * Math.PI);
+            ctx.arc(p.x, p.y, innerRadius, 0, 2 * Math.PI);
             
             let color = "#ffffff";
             let strokeColor = "rgba(255, 255, 255, 0.2)";
             let glow = false;
+            let onPath = routeActive && activeShortestPath.includes(node.id);
             
-            if (blockedNodes.has(node.id)) {
-                color = "#000000";
-                strokeColor = "#ffffff";
-            } else if (currentMode === "route" && routePoints.includes(node.id)) {
-                color = "#ffffff";
-                strokeColor = "#ffffff";
-                glow = true;
-            } else if (hoverNode && hoverNode.id === node.id) {
-                color = "#ffffff";
-                strokeColor = "#ffffff";
-                glow = true;
+            if (routeActive) {
+                if (onPath || routePoints.includes(node.id)) {
+                    if (blockedNodes.has(node.id)) {
+                        color = "#000000";
+                        strokeColor = "#ffffff";
+                    } else if (routePoints.includes(node.id)) {
+                        color = "#ffffff";
+                        strokeColor = "#ffffff";
+                        glow = true;
+                    } else {
+                        color = "#ffffff";
+                        strokeColor = "rgba(255, 255, 255, 0.5)";
+                    }
+                } else {
+                    // Muted background node: slate-grey (#333333)
+                    color = "#333333";
+                    strokeColor = "rgba(51, 51, 51, 0.5)";
+                }
+            } else {
+                if (blockedNodes.has(node.id)) {
+                    color = "#000000";
+                    strokeColor = "#ffffff";
+                } else if (currentMode === "route" && routePoints.includes(node.id)) {
+                    color = "#ffffff";
+                    strokeColor = "#ffffff";
+                    glow = true;
+                } else if (hoverNode && hoverNode.id === node.id) {
+                    color = "#ffffff";
+                    strokeColor = "#ffffff";
+                    glow = true;
+                }
             }
             
             ctx.fillStyle = color;
             if (glow) {
                 ctx.save();
                 ctx.shadowColor = color;
-                ctx.shadowBlur = 8;
+                ctx.shadowBlur = Math.max(2.0, 8 / Math.sqrt(zoomScale));
                 ctx.fill();
                 ctx.restore();
             } else {
@@ -511,11 +729,35 @@ function render() {
             
             // Outer ring
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
+            ctx.arc(p.x, p.y, outerRadius, 0, 2 * Math.PI);
             ctx.strokeStyle = strokeColor;
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = outerLineWidth;
             ctx.stroke();
         });
+        
+        // --- 4. MINIMALIST HUD METRIC OVERLAY ---
+        if (currentMode === "route" && routePoints.length === 2) {
+            const nodeB = activeGraph.nodes.find(n => n.id === routePoints[1]);
+            if (nodeB) {
+                const pB = getScaledCoords(nodeB);
+                ctx.save();
+                ctx.font = "bold 9px monospace";
+                ctx.textAlign = "left";
+                ctx.textBaseline = "middle";
+                ctx.shadowColor = "#000000";
+                ctx.shadowBlur = 4;
+                
+                if (activeShortestPath && activeRouteMeta) {
+                    ctx.fillStyle = "#ffffff";
+                    const hudText = `ROUTE ESTABLISHED // DISTANCE: ${activeRouteMeta.distance} METERS // PATH COMPLEXITY: ${activeRouteMeta.complexity}`;
+                    ctx.fillText(hudText, pB.x + 18, pB.y);
+                } else {
+                    ctx.fillStyle = "#ff3333";
+                    ctx.fillText("ROUTE BLOCKED // PATH DISCONNECTED // 0 METERS", pB.x + 18, pB.y);
+                }
+                ctx.restore();
+            }
+        }
     }
 }
 
@@ -524,46 +766,164 @@ function getScaledCoords(node) {
     // Presets and generated custom graphs are designed relative to 800x600 aspect coordinates
     const scaleX = canvas.width / 800;
     const scaleY = canvas.height / 600;
+    
+    const sx = node.x * scaleX;
+    const sy = node.y * scaleY;
+    
     return {
-        x: node.x * scaleX,
-        y: node.y * scaleY
+        x: sx * zoomScale + panX,
+        y: sy * zoomScale + panY
     };
 }
 
 // Reverse conversion (from screen client x,y to 800x600 absolute grid coords)
 function getAbsoluteCoords(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    const x_canvas = clientX - rect.left;
+    const y_canvas = clientY - rect.top;
+    
+    // Reverse zoom and pan transformation
+    const x_screen = (x_canvas - panX) / zoomScale;
+    const y_screen = (y_canvas - panY) / zoomScale;
     
     const scaleX = 800 / rect.width;
     const scaleY = 600 / rect.height;
     return {
-        x: x * scaleX,
-        y: y * scaleY
+        x: x_screen * scaleX,
+        y: y_screen * scaleY
     };
+}
+
+// Distance from point p to line segment ab
+function getDistanceToSegment(p, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    if (l2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+    t = Math.max(0, Math.min(1, t));
+    
+    const cx = a.x + t * dx;
+    const cy = a.y + t * dy;
+    
+    return Math.hypot(p.x - cx, p.y - cy);
 }
 
 // Mouse Event handlers
 function onMouseMove(e) {
+    if (isPanning) {
+        panX = e.clientX - startPanX;
+        panY = e.clientY - startPanY;
+        render();
+        return;
+    }
+    
     const coords = getAbsoluteCoords(e.clientX, e.clientY);
     
-    // Find if hovering over a node
-    let found = null;
+    // 1. Check node hover
+    let foundNode = null;
     activeGraph.nodes.forEach(node => {
         const dist = Math.hypot(node.x - coords.x, node.y - coords.y);
         if (dist <= 16) { // slightly wider target hit zone
-            found = node;
+            foundNode = node;
         }
     });
     
-    if (found !== hoverNode) {
-        hoverNode = found;
+    // 2. Check edge hover (only if no node is hovered)
+    let foundEdge = null;
+    if (!foundNode && activeGraph.edges.length > 0) {
+        let minEdgeDist = 12; // hover threshold in pixels
+        activeGraph.edges.forEach(edge => {
+            const n1 = activeGraph.nodes.find(n => n.id === edge.from);
+            const n2 = activeGraph.nodes.find(n => n.id === edge.to);
+            if (n1 && n2) {
+                const dist = getDistanceToSegment(coords, n1, n2);
+                if (dist < minEdgeDist) {
+                    minEdgeDist = dist;
+                    foundEdge = edge;
+                }
+            }
+        });
+    }
+    
+    let stateChanged = false;
+    if (foundNode !== hoverNode) {
+        hoverNode = foundNode;
+        stateChanged = true;
+    }
+    if (foundEdge !== hoverEdge) {
+        hoverEdge = foundEdge;
+        stateChanged = true;
+    }
+    
+    if (stateChanged) {
         render();
+    }
+    
+    // Display minimal floating tooltip if INSPECT mode is active
+    if (currentMode === "inspect") {
+        const tooltip = document.getElementById("telemetryTooltip");
+        if (foundNode) {
+            const connections = activeGraph.edges.filter(e => e.from === foundNode.id || e.to === foundNode.id);
+            const degCentrality = connections.length;
+            
+            tooltip.style.display = "block";
+            // Make it look clean/minimal with no background cards, borders or shadows (per prompt)
+            tooltip.style.background = "none";
+            tooltip.style.border = "none";
+            tooltip.style.boxShadow = "none";
+            tooltip.style.padding = "0";
+            tooltip.style.color = "#ffffff";
+            tooltip.style.textShadow = "0px 0px 4px #000000"; // text shadow for readability on imagery
+            
+            tooltip.style.left = `${e.clientX + 15}px`;
+            tooltip.style.top = `${e.clientY + 15}px`;
+            
+            tooltip.innerHTML = `
+                <div style="font-family: monospace; font-size: 11px; line-height: 1.4;">
+                    <strong>JUNCTION #${foundNode.id}</strong><br/>
+                    Degree Centrality: ${degCentrality}<br/>
+                    Coord: ${foundNode.x.toFixed(0)}m, ${foundNode.y.toFixed(0)}m
+                </div>
+            `;
+        } else if (foundEdge) {
+            const n1 = activeGraph.nodes.find(n => n.id === foundEdge.from);
+            const n2 = activeGraph.nodes.find(n => n.id === foundEdge.to);
+            const dx = n1.x - n2.x;
+            const dy = n1.y - n2.y;
+            const pixelLen = Math.hypot(dx, dy);
+            const meterLen = Math.round(pixelLen * 5); // 0.005 km per pixel = 5m
+            
+            tooltip.style.display = "block";
+            tooltip.style.background = "none";
+            tooltip.style.border = "none";
+            tooltip.style.boxShadow = "none";
+            tooltip.style.padding = "0";
+            tooltip.style.color = "#ffffff";
+            tooltip.style.textShadow = "0px 0px 4px #000000";
+            
+            tooltip.style.left = `${e.clientX + 15}px`;
+            tooltip.style.top = `${e.clientY + 15}px`;
+            
+            tooltip.innerHTML = `
+                <div style="font-family: monospace; font-size: 11px; line-height: 1.4;">
+                    <strong>EDGE #${foundEdge.from}-${foundEdge.to}</strong><br/>
+                    Edge Length: ${meterLen}m
+                </div>
+            `;
+        } else {
+            tooltip.style.display = "none";
+        }
     }
 }
 
 function onMouseClick(e) {
+    if (hasPanned) {
+        hasPanned = false;
+        return;
+    }
+    
     if (!hoverNode) {
         // If clicking empty canvas area, close tooltip
         document.getElementById("telemetryTooltip").style.display = "none";
@@ -591,13 +951,20 @@ function onMouseClick(e) {
     } else if (currentMode === "route") {
         if (routePoints.includes(node.id)) {
             routePoints = routePoints.filter(id => id !== node.id);
+            activeShortestPath = null;
+            activeRouteMeta = null;
         } else {
             if (routePoints.length >= 2) {
                 routePoints.shift();
             }
             routePoints.push(node.id);
         }
-        calculateResilience(); // This triggers backend updates and Dijkstra solution
+        calculateResilience();
+        if (routePoints.length === 2) {
+            planRoute();
+        } else {
+            render();
+        }
     }
 }
 
@@ -622,8 +989,20 @@ function showNodeDetail(node) {
         '<span class="badge badge-blocked">Blocked</span>' : 
         '<span class="badge badge-normal">Active</span>';
         
+    const tooltip = document.getElementById("telemetryTooltip");
     const tooltipTitle = document.getElementById("tooltipTitle");
     const tooltipContent = document.getElementById("tooltipContent");
+    
+    // Restore standard monochromatic card style
+    if (tooltip) {
+        tooltip.style.background = "#070707";
+        tooltip.style.border = "var(--border-thin)";
+        tooltip.style.padding = "12px";
+        tooltip.style.borderRadius = "4px";
+        tooltip.style.boxShadow = "0 4px 20px rgba(0, 0, 0, 0.7)";
+        tooltip.style.color = "";
+        tooltip.style.textShadow = "";
+    }
     
     tooltipTitle.textContent = `JUNCTION #${node.id}`;
     tooltipContent.innerHTML = `
