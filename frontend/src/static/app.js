@@ -55,19 +55,8 @@ const btnBlock = document.getElementById("btnBlock");
 const btnRoute = document.getElementById("btnRoute");
 const btnClearBlocks = document.getElementById("btnClearBlocks");
 
-// Initialize presets imagery
-const presetImages = {};
-function preloadPresetImages() {
-    Object.keys(PRESETS).forEach(key => {
-        presetImages[key] = new Image();
-        presetImages[key].src = PRESETS[key].imgUrl;
-        presetImages[key].onload = () => {
-            if (activePreset === key && !customImageLoaded) {
-                render();
-            }
-        };
-    });
-}
+
+
 
 // Set up event listeners
 window.addEventListener("resize", resizeCanvas);
@@ -163,7 +152,6 @@ canvas.addEventListener("wheel", (e) => {
 
 // Initialize App
 resizeCanvas();
-loadDynamicPresets();
 
 // Function definitions
 function resizeCanvas() {
@@ -176,111 +164,7 @@ function resizeCanvas() {
     render();
 }
 
-function loadDynamicPresets() {
-    fetch("/api/presets")
-    .then(res => res.json())
-    .then(presets => {
-        const container = document.querySelector(".preset-pill-row");
-        if (!container) return;
-        
-        // Remove existing preset buttons (keep CLEAR BLOCKS button)
-        const clearBtn = document.getElementById("btnClearBlocks");
-        container.innerHTML = "";
-        
-        presets.forEach((preset, index) => {
-            const btn = document.createElement("button");
-            btn.className = "preset-btn" + (index === 0 ? " active" : "");
-            btn.setAttribute("data-preset", preset.id);
-            btn.textContent = preset.name;
-            btn.addEventListener("click", (e) => {
-                document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
-                btn.classList.add("active");
-                loadPreset(preset.id);
-            });
-            container.appendChild(btn);
-        });
-        
-        if (clearBtn) {
-            container.appendChild(clearBtn);
-        }
-        
-        if (presets.length > 0) {
-            loadPreset(presets[0].id);
-        }
-    })
-    .catch(err => {
-        console.error("Failed to load presets dynamically", err);
-    });
-}
 
-function loadPreset(presetId) {
-    blockedNodes.clear();
-    routePoints = [];
-    activeShortestPath = null;
-    customImageLoaded = false;
-    customImageSrc = null;
-    
-    if (systemStatus) systemStatus.textContent = "Loading preset...";
-    
-    if (loadingOverlay) loadingOverlay.classList.add("active");
-    if (progressBarFill) progressBarFill.style.width = "20%";
-    if (loadingStep) loadingStep.textContent = `Querying preset '${presetId}' inference...`;
-    
-    fetch("/api/presets/infer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ preset_id: presetId })
-    })
-    .then(response => {
-        if (!response.ok) throw new Error("Preset inference failed");
-        return response.json();
-    })
-    .then(data => {
-        if (progressBarFill) progressBarFill.style.width = "100%";
-        if (loadingStep) loadingStep.textContent = "Inference completed.";
-        
-        setTimeout(() => {
-            if (loadingOverlay) loadingOverlay.classList.remove("active");
-            if (systemStatus) systemStatus.textContent = "Active - Preset Extracted";
-            
-            activeGraph = {
-                stats: {
-                    totalLen: data.metrics.total_len_km,
-                    nodes: data.metrics.active_nodes,
-                    edges: data.metrics.active_edges,
-                    avgLen: data.metrics.avg_len_km,
-                    redundancy: data.metrics.redundancy,
-                    resilience: data.metrics.resilience + "%",
-                    apls: Number(data.metrics.apls).toFixed(3)
-                },
-                apls: data.metrics.apls,
-                nodes: data.nodes,
-                edges: data.edges
-            };
-            
-            // Set preset image base64 directly as background image
-            customImageLoaded = true;
-            customImageSrc = new Image();
-            customImageSrc.src = data.image;
-            customImageSrc.onload = () => {
-                updateStatsDisplay();
-                updateResilienceUI(data.metrics);
-                // Reset pan-zoom
-                zoomScale = 1.0;
-                panX = 0;
-                panY = 0;
-                resizeCanvas();
-            };
-        }, 300);
-    })
-    .catch(err => {
-        console.error(err);
-        if (loadingStep) loadingStep.textContent = "Inference Error: " + err.message;
-        setTimeout(() => {
-            if (loadingOverlay) loadingOverlay.classList.remove("active");
-        }, 2000);
-    });
-}
 
 function updateStatsDisplay() {
     if (valAPLS) valAPLS.textContent = Number(activeGraph.apls).toFixed(3);
