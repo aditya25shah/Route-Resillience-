@@ -9,9 +9,9 @@ This version features a **100% dynamic, backend-calculated real-time analytics e
 ## Quick Start & Local Endpoints
 
 After launching the Docker environment, you can access the application layers directly:
-*   **Web Dashboard Portal:** [http://localhost:8080](http://localhost:8080)
-*   **Analytics REST API:** [http://localhost:8000](http://localhost:8000)
-*   **API Interactive Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
+*   **Web Dashboard Portal:** [http://localhost:9080](http://localhost:9080)
+*   **Analytics REST API:** [http://localhost:9000](http://localhost:9000)
+*   **API Interactive Documentation:** [http://localhost:9000/docs](http://localhost:9000/docs)
 
 ---
 
@@ -78,9 +78,9 @@ During startup:
 
 ## Endpoints
 
-*   **Frontend Dashboard:** [http://localhost:8080](http://localhost:8080)
-*   **Backend REST API:** [http://localhost:8000](http://localhost:8000)
-*   **Backend OpenAPI Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+*   **Frontend Dashboard:** [http://localhost:9080](http://localhost:9080)
+*   **Backend REST API:** [http://localhost:9000](http://localhost:9000)
+*   **Backend OpenAPI Docs:** [http://localhost:9000/docs](http://localhost:9000/docs)
 
 ---
 
