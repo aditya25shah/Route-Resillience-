@@ -282,6 +282,7 @@ class GraphEngine:
                 curr = leaf
                 prev = None
                 dist_accum = 0.0
+                visited_trace = {leaf}
                 while True:
                     neighbors = list(angle_g.neighbors(curr))
                     if len(neighbors) == 1:
@@ -290,6 +291,10 @@ class GraphEngine:
                         next_node = neighbors[0] if neighbors[1] == prev else neighbors[1]
                     else:
                         break
+                    
+                    if next_node in visited_trace:
+                        break
+                    visited_trace.add(next_node)
                     
                     d = math.hypot(angle_g.nodes[next_node]['x'] - angle_g.nodes[curr]['x'],
                                    angle_g.nodes[next_node]['y'] - angle_g.nodes[curr]['y']) * 5.0

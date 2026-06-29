@@ -168,7 +168,9 @@ class InferencePipeline:
         
         nodes_raw = list(zip(junction_x, junction_y)) + list(zip(term_x, term_y))
         
-        # --- SPATIAL DEDUPLICATION: Grid-snap nodes within 8px radius ---
+        # --- SPATIAL DEDUPLICATION: O(N) Grid-snap nodes within 12px radius ---
+        grid = {}
+        grid_size = 12
         nodes = []
         node_id = 1
         node_lookup = {}
@@ -183,13 +185,23 @@ class InferencePipeline:
                 if vertex_prob_map[by, bx] < 0.62:
                     continue
             
-            duplicate = False
-            for n in nodes:
-                if abs(n["x"] - x) < 8 and abs(n["y"] - y) < 8:
-                    duplicate = True
-                    node_lookup[(x, y)] = n["id"]
+            gx, gy = x // grid_size, y // grid_size
+            found = False
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    cell = (gx + dx, gy + dy)
+                    if cell in grid:
+                        for n in grid[cell]:
+                            if abs(n["x"] - x) < grid_size and abs(n["y"] - y) < grid_size:
+                                found = True
+                                node_lookup[(x, y)] = n["id"]
+                                break
+                    if found:
+                        break
+                if found:
                     break
-            if not duplicate:
+            
+            if not found:
                 new_node = {
                     "id": node_id,
                     "x": x,
@@ -198,6 +210,11 @@ class InferencePipeline:
                 }
                 nodes.append(new_node)
                 node_lookup[(x, y)] = node_id
+                
+                cell = (gx, gy)
+                if cell not in grid:
+                    grid[cell] = []
+                grid[cell].append(new_node)
                 node_id += 1
             
         # --- BOUNDED EDGE LINKING: MAX_RADIUS = 60px (300m at 5m/px) ---
