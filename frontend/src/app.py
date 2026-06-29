@@ -10,23 +10,36 @@ app = FastAPI(title="Route Resilience Web Portal", version="1.0.0")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 print(f"[INFO] Frontend proxy BACKEND_URL set to: {BACKEND_URL}", flush=True)
 
+# Reactive loading state variable
+app_state = {
+    "is_loading": False
+}
+
+@app.get("/api/loading/status")
+async def get_loading_status():
+    return {"is_loading": app_state["is_loading"]}
+
 # Proxy post endpoints to backend
 @app.post("/api/infer")
 async def proxy_infer(request: Request):
     """
     Proxies topological extraction queries directly to the backend.
     """
-    body = await request.body()
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in [
-        "host", "content-length", "connection", "keep-alive", "proxy-connection", "transfer-encoding"
-    ]}
-    
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        try:
-            resp = await client.post(f"{BACKEND_URL}/api/infer", content=body, headers=headers)
-            return resp.json()
-        except httpx.HTTPError as e:
-            raise HTTPException(status_code=502, detail=f"Inference gateway error: {e}")
+    app_state["is_loading"] = True
+    try:
+        body = await request.body()
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in [
+            "host", "content-length", "connection", "keep-alive", "proxy-connection", "transfer-encoding"
+        ]}
+        
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            try:
+                resp = await client.post(f"{BACKEND_URL}/api/infer", content=body, headers=headers)
+                return resp.json()
+            except httpx.HTTPError as e:
+                raise HTTPException(status_code=502, detail=f"Inference gateway error: {e}")
+    finally:
+        app_state["is_loading"] = False
 
 @app.post("/api/resilience")
 async def proxy_resilience(request: Request):

@@ -186,10 +186,34 @@ function handleFile(file) {
 }
 
 function triggerInferencePipeline(imgDataSrc) {
+    let isLoading = true;
     if (loadingOverlay) loadingOverlay.classList.add("active");
-    if (progressBarFill) progressBarFill.style.width = "60%";
-    if (loadingStep) loadingStep.textContent = "Running Sat2Graph GTE inference on backend...";
+    if (progressBarFill) progressBarFill.style.width = "10%";
+    if (loadingStep) {
+        loadingStep.style.color = "";
+        loadingStep.style.fontFamily = "";
+        loadingStep.textContent = "Stage 1: READING RASTER GEOMETRY...";
+    }
     if (systemStatus) systemStatus.textContent = "Running live inference...";
+    
+    // Fine-line radar spinner
+    const spinner = document.querySelector(".spinner");
+    if (spinner) spinner.style.display = "block";
+    
+    // Simulate pipeline stages using timeouts while request runs in background
+    let stageTimer = setTimeout(() => {
+        if (isLoading && loadingStep) {
+            loadingStep.textContent = "Stage 2: EXECUTING SAT2GRAPH INFERENCE...";
+            if (progressBarFill) progressBarFill.style.width = "40%";
+        }
+    }, 1000);
+    
+    let stageTimer2 = setTimeout(() => {
+        if (isLoading && loadingStep) {
+            loadingStep.textContent = "Stage 3: APPLYING TOPOLOGICAL FILTERS...";
+            if (progressBarFill) progressBarFill.style.width = "75%";
+        }
+    }, 2500);
     
     fetch("/api/infer", {
         method: "POST",
@@ -197,6 +221,9 @@ function triggerInferencePipeline(imgDataSrc) {
         body: JSON.stringify({ image: imgDataSrc })
     })
     .then(response => {
+        isLoading = false;
+        clearTimeout(stageTimer);
+        clearTimeout(stageTimer2);
         if (!response.ok) throw new Error("Inference execution failed");
         return response.json();
     })
@@ -239,10 +266,37 @@ function triggerInferencePipeline(imgDataSrc) {
         }, 300);
     })
     .catch(err => {
+        isLoading = false;
+        clearTimeout(stageTimer);
+        clearTimeout(stageTimer2);
         console.error(err);
-        if (loadingOverlay) loadingOverlay.classList.remove("active");
-        if (systemStatus) systemStatus.textContent = "Inference pipeline offline";
-        alert("Geospatial backend connection error. Please verify route-backend is running.");
+        
+        // INTERCEPT TIMEOUT / FAILURE: Hide spinner and display clean white error message
+        if (spinner) spinner.style.display = "none";
+        if (loadingStep) {
+            loadingStep.style.color = "#ffffff";
+            loadingStep.style.fontFamily = "'SF Mono', monospace";
+            loadingStep.textContent = "INFERENCE TIMEOUT // CHECK WEIGHTS PATH";
+        }
+        if (progressBarFill) {
+            progressBarFill.style.width = "100%";
+            progressBarFill.style.backgroundColor = "#ff0000";
+        }
+        if (systemStatus) systemStatus.textContent = "Inference Timeout";
+        
+        // Let it persist for 6 seconds so user can read it, then reset
+        setTimeout(() => {
+            if (loadingOverlay) loadingOverlay.classList.remove("active");
+            // Reset styles for next attempt
+            if (spinner) spinner.style.display = "block";
+            if (loadingStep) {
+                loadingStep.style.color = "";
+                loadingStep.style.fontFamily = "";
+            }
+            if (progressBarFill) {
+                progressBarFill.style.backgroundColor = "";
+            }
+        }, 6000);
     });
 }
 

@@ -35,35 +35,51 @@ class InferencePipeline:
         self.model = None
         self.weights_path = weights_path
         
-        # Self-healing attempt to load neural network weights
-        if os.path.exists(self.weights_path):
-            try:
-                self.model = SimpleGTEModel().to(self.device)
-                # Load state dict safely
-                self.model.load_state_dict(torch.load(self.weights_path, map_location=self.device), strict=False)
-                
-                # Apply PyTorch 2.x compilation patterns
-                if hasattr(torch, "compile"):
-                    try:
-                        self.model = torch.compile(self.model)
-                        print("[INFO] PyTorch 2.x native compilation successfully applied.")
-                    except Exception as compile_err:
-                        print(f"[WARNING] torch.compile is not supported in this runtime: {compile_err}")
-                
-                self.model.eval()
-                print(f"[INFO] Sat2Graph neural model successfully loaded on {self.device}")
-            except Exception as e:
-                print(f"[WARNING] Neural model state load failed: {e}. Falling back to dynamic structural skeletonization.")
-                self.model = None
-        else:
-            print(f"[INFO] Weights file not found at {weights_path}. Running real-time structural skeletonization pipeline.")
+        # Strict fail-fast neural weights validation and initialization block
+        if not os.path.exists(self.weights_path):
+            import sys
+            print(f"[FATAL ERROR] Pre-trained weights file not found at {self.weights_path}!", file=sys.stderr)
+            sys.exit(1)
+            
+        # Calculate checksum to ensure integrity
+        import hashlib
+        try:
+            with open(self.weights_path, "rb") as f:
+                file_hash = hashlib.sha256(f.read()).hexdigest()
+            expected_hash = "bfa5500962446da0353bbea9129d089361ca025c6e3c5c8c26516b3b3bf14525"
+            if file_hash != expected_hash:
+                import sys
+                print(f"[FATAL ERROR] Pre-trained weights file at {self.weights_path} is corrupted! SHA256 checksum mismatch (got: {file_hash}, expected: {expected_hash})", file=sys.stderr)
+                sys.exit(1)
+        except Exception as hash_err:
+            import sys
+            print(f"[FATAL ERROR] Checksum validation failed: {hash_err}", file=sys.stderr)
+            sys.exit(1)
+            
+        try:
+            self.model = SimpleGTEModel().to(self.device)
+            self.model.load_state_dict(torch.load(self.weights_path, map_location=self.device), strict=False)
+            
+            # Apply PyTorch 2.x compilation patterns
+            if hasattr(torch, "compile"):
+                try:
+                    self.model = torch.compile(self.model)
+                    print("[INFO] PyTorch 2.x native compilation successfully applied.")
+                except Exception as compile_err:
+                    print(f"[WARNING] torch.compile is not supported in this runtime: {compile_err}")
+            
+            self.model.eval()
+            print(f"[INFO] Sat2Graph neural model successfully loaded and verified on {self.device}")
+        except Exception as load_err:
+            import sys
+            print(f"[FATAL ERROR] Failed to initialize model or load onto device {self.device}: {load_err}", file=sys.stderr)
+            sys.exit(1)
 
     def run_inference(self, image):
         """
         Runs the full inference pipeline:
         1. Resizes input and converts to numpy
-        2. Queries model or executesfallback structural filters
-        3. Decodes vertices and segments using strict mathematical thresholding and coordinates deduplication.
+        2. Queries model using strict mathematical thresholding and coordinates deduplication.
         """
         img_np = np.array(image)
         if len(img_np.shape) == 2:
@@ -75,38 +91,26 @@ class InferencePipeline:
         target_w, target_h = 800, 600
         img_resized = cv2.resize(img_np, (target_w, target_h))
         
-        # Check if neural model is available
-        if self.model is not None:
-            try:
-                tensor_in = torch.from_numpy(img_resized).permute(2, 0, 1).float().unsqueeze(0).to(self.device) / 255.0
-                with torch.no_grad():
-                    edges_mask, nodes_mask = self.model(tensor_in)
-                    
-                # Apply Edgeness Probability Threshold (threshold_edge = 0.45)
-                edges_mean = edges_mask.squeeze(0).mean(dim=0)
-                edges_binary = (edges_mean >= 0.45).float() * 255.0
-                mask_np = edges_binary.cpu().numpy().astype(np.uint8)
-                mask_resized = cv2.resize(mask_np, (target_w, target_h))
+        try:
+            tensor_in = torch.from_numpy(img_resized).permute(2, 0, 1).float().unsqueeze(0).to(self.device) / 255.0
+            with torch.no_grad():
+                edges_mask, nodes_mask = self.model(tensor_in)
                 
-                # Rescale nodes_mask to CPU numpy array to pass as vertexness probability map
-                nodes_mean = nodes_mask.squeeze(0).mean(dim=0).cpu().numpy()
-                nodes_resized = cv2.resize(nodes_mean, (target_w, target_h))
-                
-                return self._extract_graph_from_mask(img_resized, mask_resized, vertex_prob_map=nodes_resized)
-            except Exception as e:
-                print(f"[ERROR] Live PyTorch inference failure: {e}. Defaulting to dynamic structural mode.")
-                
-        # 2. Dynamic structural skeletonization fallback pipeline
-        gray = cv2.cvtColor(img_resized, cv2.COLOR_RGB2GRAY)
-        smoothed = cv2.bilateralFilter(gray, 9, 75, 75)
-        thresh = cv2.adaptiveThreshold(smoothed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 8)
-        
-        close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        closed_mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, close_kernel)
-        open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        clean_mask = cv2.morphologyEx(closed_mask, cv2.MORPH_OPEN, open_kernel)
-        
-        return self._extract_graph_from_mask(img_resized, clean_mask, vertex_prob_map=None)
+            # Apply Edgeness Probability Threshold (threshold_edge = 0.58)
+            edges_mean = edges_mask.squeeze(0).mean(dim=0)
+            edges_binary = (edges_mean >= 0.58).float() * 255.0
+            mask_np = edges_binary.cpu().numpy().astype(np.uint8)
+            mask_resized = cv2.resize(mask_np, (target_w, target_h))
+            
+            # Rescale nodes_mask to CPU numpy array to pass as vertexness probability map
+            nodes_mean = nodes_mask.squeeze(0).mean(dim=0).cpu().numpy()
+            nodes_resized = cv2.resize(nodes_mean, (target_w, target_h))
+            
+            return self._extract_graph_from_mask(img_resized, mask_resized, vertex_prob_map=nodes_resized)
+        except Exception as e:
+            import sys
+            print(f"[FATAL ERROR] Live PyTorch inference failure: {e}", file=sys.stderr)
+            sys.exit(1)
 
     def _extract_graph_from_mask(self, original_img, binary_mask, vertex_prob_map=None):
         """
@@ -128,16 +132,21 @@ class InferencePipeline:
         
         nodes_raw = list(zip(junction_x, junction_y)) + list(zip(term_x, term_y))
         
-        # --- SPATIAL DEDUPLICATION: Grid-snap nodes within 15px radius ---
-        # Raw skeleton generates thousands of pixel-level junction points.
-        # Collapse nearby points into single representative nodes to keep
-        # the working set under ~1000 and prevent KDTree pair explosion.
+        # --- SPATIAL DEDUPLICATION: Grid-snap nodes within 8px radius ---
         nodes = []
         node_id = 1
         node_lookup = {}
         
         for pt in nodes_raw:
             x, y = int(pt[0]), int(pt[1])
+            
+            # Apply threshold_vertex = 0.62 filter if vertex_prob_map is provided
+            if vertex_prob_map is not None:
+                bx = min(max(x, 0), vertex_prob_map.shape[1] - 1)
+                by = min(max(y, 0), vertex_prob_map.shape[0] - 1)
+                if vertex_prob_map[by, bx] < 0.62:
+                    continue
+            
             duplicate = False
             for n in nodes:
                 if abs(n["x"] - x) < 8 and abs(n["y"] - y) < 8:

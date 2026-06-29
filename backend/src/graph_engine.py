@@ -138,7 +138,7 @@ class GraphEngine:
         if not nodes:
             return [], []
 
-        # --- 1. SPATIAL CENTROID DEDUPLICATION (NMS) ---
+        # --- 1. SPATIAL CENTROID DEDUPLICATION (NMS) within 20 meters ---
         merge_groups = []
         visited = set()
         
@@ -152,9 +152,9 @@ class GraphEngine:
                 n2id = n2["id"]
                 if n2id in visited:
                     continue
-                # Physical distance check (1px = 5m, so 12m limit)
+                # Physical distance check (1px = 5m, NMS radius increased to 20m)
                 dist_m = math.hypot(n1["x"] - n2["x"], n1["y"] - n2["y"]) * 5.0
-                if dist_m < 12.0:
+                if dist_m < 20.0:
                     group.append(n2)
                     visited.add(n2id)
             merge_groups.append(group)
@@ -185,7 +185,7 @@ class GraphEngine:
                     seen_edges.add(edge_key)
                     updated_edges.append({"from": u, "to": v})
 
-        # --- 2. ANGULAR INFRASTRUCTURE FILTERING ---
+        # --- 2. ANGULAR INFRASTRUCTURE FILTERING & SHARP TURN CORRECTION ---
         angle_g = nx.Graph()
         for node in deduped_nodes:
             angle_g.add_node(node["id"], **node)
@@ -197,44 +197,49 @@ class GraphEngine:
             neighbors = list(angle_g.neighbors(v))
             if len(neighbors) < 2:
                 continue
-            for idx1 in range(len(neighbors)):
-                for idx2 in range(idx1 + 1, len(neighbors)):
-                    u = neighbors[idx1]
-                    w = neighbors[idx2]
+            for w in neighbors:
+                # e = (v, w) is the candidate inferred edge
+                # Trace back from v, avoiding w, along degree-2 continuous path
+                curr = v
+                prev = w
+                path = [v]
+                dist = 0.0
+                while dist < 6.0:  # 30 meters / 5m per pixel = 6 pixels
+                    opts = [n for n in angle_g.neighbors(curr) if n != prev]
+                    if len(opts) == 1:
+                        nxt = opts[0]
+                        dx = angle_g.nodes[nxt]["x"] - angle_g.nodes[curr]["x"]
+                        dy = angle_g.nodes[nxt]["y"] - angle_g.nodes[curr]["y"]
+                        dist += math.hypot(dx, dy)
+                        path.append(nxt)
+                        prev = curr
+                        curr = nxt
+                    else:
+                        break
+                
+                # Check turn angle relative to the preceding continuous road segment (if at least 2 nodes)
+                if len(path) >= 2:
+                    ax = angle_g.nodes[v]["x"] - angle_g.nodes[path[-1]]["x"]
+                    ay = angle_g.nodes[v]["y"] - angle_g.nodes[path[-1]]["y"]
                     
-                    nu = angle_g.nodes[u]
-                    nv = angle_g.nodes[v]
-                    nw = angle_g.nodes[w]
+                    bx = angle_g.nodes[w]["x"] - angle_g.nodes[v]["x"]
+                    by = angle_g.nodes[w]["y"] - angle_g.nodes[v]["y"]
                     
-                    L_uv = math.hypot(nv["x"] - nu["x"], nv["y"] - nu["y"]) * 5.0
-                    L_vw = math.hypot(nw["x"] - nv["x"], nw["y"] - nv["y"]) * 5.0
-                    
-                    if L_uv < 20.0 or L_vw < 20.0:
-                        # Vector calculation: a = v - u, b = w - v
-                        ax, ay = nv["x"] - nu["x"], nv["y"] - nu["y"]
-                        bx, by = nw["x"] - nv["x"], nw["y"] - nv["y"]
-                        
-                        mag_a = math.hypot(ax, ay)
-                        mag_b = math.hypot(bx, by)
-                        
-                        if mag_a > 0 and mag_b > 0:
-                            dot = ax * bx + ay * by
-                            cos_val = max(-1.0, min(1.0, dot / (mag_a * mag_b)))
-                            theta_deg = math.degrees(math.acos(cos_val))
+                    mag_a = math.hypot(ax, ay)
+                    mag_b = math.hypot(bx, by)
+                    if mag_a > 0 and mag_b > 0:
+                        dot = ax * bx + ay * by
+                        cos_val = max(-1.0, min(1.0, dot / (mag_a * mag_b)))
+                        theta_deg = math.degrees(math.acos(cos_val))
+                        # Turn greater than 45 degrees
+                        if theta_deg > 45.0:
+                            edges_to_drop.add((min(v, w), max(v, w)))
                             
-                            if theta_deg > 60.0:
-                                if L_uv < 20.0:
-                                    edges_to_drop.add((min(u, v), max(u, v)))
-                                if L_vw < 20.0:
-                                    edges_to_drop.add((min(v, w), max(v, w)))
-                                    
         for u, v in edges_to_drop:
             if angle_g.has_edge(u, v):
                 angle_g.remove_edge(u, v)
 
         # --- 3. SCALE-AWARE COMPONENT PRUNING (keep all ≥ 15m) ---
-        # Do NOT keep only the largest component — that destroys valid road fragments.
-        # Instead, compute cumulative edge length per component and keep any ≥ 15 meters.
         for u_e, v_e in angle_g.edges():
             nu = angle_g.nodes[u_e]
             nv = angle_g.nodes[v_e]
@@ -248,6 +253,45 @@ class GraphEngine:
             if comp_len_m < 15.0:
                 nodes_to_remove.update(comp)
         angle_g.remove_nodes_from(nodes_to_remove)
+
+        # --- 3b. DEAD-END PRUNING (strip dead-ends < 30 meters) ---
+        pruned = True
+        while pruned:
+            pruned = False
+            deg1_nodes = [n for n in angle_g.nodes() if angle_g.degree(n) == 1]
+            for leaf in deg1_nodes:
+                path = [leaf]
+                curr = leaf
+                prev = None
+                dist_accum = 0.0
+                while True:
+                    neighbors = list(angle_g.neighbors(curr))
+                    if len(neighbors) == 1:
+                        next_node = neighbors[0]
+                    elif len(neighbors) == 2:
+                        next_node = neighbors[0] if neighbors[1] == prev else neighbors[1]
+                    else:
+                        break
+                    
+                    d = math.hypot(angle_g.nodes[next_node]['x'] - angle_g.nodes[curr]['x'],
+                                   angle_g.nodes[next_node]['y'] - angle_g.nodes[curr]['y']) * 5.0
+                    dist_accum += d
+                    path.append(next_node)
+                    prev = curr
+                    curr = next_node
+                
+                if dist_accum < 30.0:
+                    for node_to_rem in path[:-1]:
+                        if angle_g.has_node(node_to_rem):
+                            angle_g.remove_node(node_to_rem)
+                            pruned = True
+                    if len(path) > 0:
+                        last_node = path[-1]
+                        if angle_g.has_node(last_node) and angle_g.degree(last_node) == 0:
+                            angle_g.remove_node(last_node)
+                            pruned = True
+                    if pruned:
+                        break
             
         # --- 4. COLLINEAR PATH CONSOLIDATION (GAP BRIDGING) ---
         # Find all degree-1 nodes
