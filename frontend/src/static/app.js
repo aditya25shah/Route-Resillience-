@@ -525,7 +525,7 @@ function render() {
     
     // 3. Draw Extracted Graph Overlay
     if (showGraph) {
-        const edgeWidth = Math.max(0.5, 2 / Math.sqrt(zoomScale));
+        const edgeWidth = Math.max(0.4, 1.5 / Math.sqrt(zoomScale));
         const routeActive = (currentMode === "route" && routePoints.length === 2 && activeShortestPath);
         
         // Draw Edges
@@ -606,9 +606,9 @@ function render() {
         }
         
         // Draw Nodes
-        const innerRadius = Math.max(1.5, 6 / Math.sqrt(zoomScale));
-        const outerRadius = Math.max(3.0, 10 / Math.sqrt(zoomScale));
-        const outerLineWidth = Math.max(0.5, 1.5 / Math.sqrt(zoomScale));
+        const innerRadius = Math.max(1.5, 4.0 / Math.sqrt(zoomScale));
+        const outerRadius = Math.max(2.5, 7.0 / Math.sqrt(zoomScale));
+        const outerLineWidth = Math.max(0.4, 1.0 / Math.sqrt(zoomScale));
         
         activeGraph.nodes.forEach(node => {
             const p = getScaledCoords(node);

@@ -138,30 +138,48 @@ class GraphEngine:
         if not nodes:
             return [], []
 
-        # --- 1. SPATIAL CENTROID DEDUPLICATION (NMS) within 20 meters ---
-        merge_groups = []
-        visited = set()
+        # --- 1. SPATIAL CENTROID DEDUPLICATION (NMS) USING SPATIAL INDEX ---
+        # Build spatial node-snapping pass using KDTree coordinate index
+        # If multiple predicted nodes fall within a physical radius of 20 meters (4px),
+        # calculate their centroid and merge them into a single intersection vertex.
+        import scipy.spatial
+        import numpy as np
         
-        for i, n1 in enumerate(nodes):
-            nid = n1["id"]
-            if nid in visited:
-                continue
-            group = [n1]
-            visited.add(nid)
-            for j, n2 in enumerate(nodes):
-                n2id = n2["id"]
-                if n2id in visited:
-                    continue
-                # Physical distance check (1px = 5m, NMS radius increased to 20m)
-                dist_m = math.hypot(n1["x"] - n2["x"], n1["y"] - n2["y"]) * 5.0
-                if dist_m < 20.0:
-                    group.append(n2)
-                    visited.add(n2id)
-            merge_groups.append(group)
+        coords = np.array([[n["x"], n["y"]] for n in nodes], dtype=float)
+        tree = scipy.spatial.KDTree(coords)
+        
+        # 1px = 5 meters, so 20 meters = 4.0 pixels
+        pairs = tree.query_pairs(r=4.0)
+        
+        # Union-Find data structure to group close nodes
+        parent = {n["id"]: n["id"] for n in nodes}
+        def find(i):
+            if parent[i] == i:
+                return i
+            parent[i] = find(parent[i])
+            return parent[i]
             
+        def union(i, j):
+            root_i = find(i)
+            root_j = find(j)
+            if root_i != root_j:
+                parent[root_i] = root_j
+                
+        for idx1, idx2 in pairs:
+            union(nodes[idx1]["id"], nodes[idx2]["id"])
+            
+        # Group nodes by root representative
+        groups = {}
+        for n in nodes:
+            root = find(n["id"])
+            if root not in groups:
+                groups[root] = []
+            groups[root].append(n)
+            
+        # Calculate centroids and build merged nodes list
         deduped_nodes = []
         node_map = {}
-        for new_id, group in enumerate(merge_groups, 1):
+        for new_id, (root, group) in enumerate(groups.items(), 1):
             centroid_x = sum(n["x"] for n in group) / len(group)
             centroid_y = sum(n["y"] for n in group) / len(group)
             merged_node = {

@@ -141,9 +141,14 @@ def route_plan(req: RoutePlanRequest):
         if not G.has_node(origin) or not G.has_node(destination):
             raise HTTPException(status_code=404, detail="PathNotFound")
             
-        # Run Dijkstra shortest path algorithm
+        # Run A* Search with Euclidean distance metric heuristic
+        def heuristic(u, v):
+            nu = G.nodes[u]
+            nv = G.nodes[v]
+            return math.hypot(nu['x'] - nv['x'], nu['y'] - nv['y'])
+            
         try:
-            path = nx.dijkstra_path(G, origin, destination, weight='weight')
+            path = nx.astar_path(G, origin, destination, heuristic=heuristic, weight='weight')
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             raise HTTPException(status_code=404, detail="PathNotFound")
             
