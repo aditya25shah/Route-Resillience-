@@ -213,6 +213,10 @@ class InferencePipeline:
             mask_np = edges_binary.cpu().numpy().astype(np.uint8)
             mask_resized = cv2.resize(mask_np, (target_w, target_h))
             
+            # Rescale raw edgeness probability map to 800x600 for Bresenham validation
+            edges_mean_np = edges_mean.cpu().numpy()
+            edges_mean_resized = cv2.resize(edges_mean_np, (target_w, target_h))
+            
             # Rescale nodes_mask to CPU numpy array to pass as vertexness probability map
             nodes_mean = nodes_mask.squeeze(0).mean(dim=0).cpu().numpy()
             nodes_resized = cv2.resize(nodes_mean, (target_w, target_h))
@@ -225,13 +229,18 @@ class InferencePipeline:
             for ch in range(6):
                 directional_resized[ch] = cv2.resize(edges_directional[ch], (target_w, target_h))
                 
-            return self._extract_graph_from_mask(img_resized, mask_resized, vertex_prob_map=nodes_resized, directional_masks=directional_resized)
+            return self._extract_graph_from_mask(
+                img_resized, mask_resized, 
+                vertex_prob_map=nodes_resized, 
+                directional_masks=directional_resized,
+                edges_prob_map=edges_mean_resized
+            )
         except Exception as e:
             import sys
             print(f"[FATAL ERROR] Live PyTorch inference failure: {e}", file=sys.stderr)
             sys.exit(1)
 
-    def _extract_graph_from_mask(self, original_img, binary_mask, vertex_prob_map=None, directional_masks=None):
+    def _extract_graph_from_mask(self, original_img, binary_mask, vertex_prob_map=None, directional_masks=None, edges_prob_map=None):
         """
         Parses binary GTE/structural segmentation masks to extract nodes and edges.
         """
@@ -304,6 +313,28 @@ class InferencePipeline:
                 grid[cell].append(new_node)
                 node_id += 1
             
+        # --- BRESENHAM LINE GENERATOR ---
+        def bresenham_line(x0, y0, x1, y1):
+            points = []
+            dx = abs(x1 - x0)
+            dy = abs(y1 - y0)
+            sx = 1 if x0 < x1 else -1
+            sy = 1 if y0 < y1 else -1
+            err = dx - dy
+            cx, cy = x0, y0
+            while True:
+                points.append((cx, cy))
+                if cx == x1 and cy == y1:
+                    break
+                e2 = 2 * err
+                if e2 > -dy:
+                    err -= dy
+                    cx += sx
+                if e2 < dx:
+                    err += dx
+                    cy += sy
+            return points
+
         # --- BOUNDED EDGE LINKING: MAX_RADIUS = 60px (300m at 5m/px) ---
         MAX_RADIUS = 60.0
         edges = []
@@ -339,18 +370,40 @@ class InferencePipeline:
                     if prob < 0.60:
                         continue
                         
-                pxs = (n1["x"] + (n2["x"] - n1["x"]) * s_vals).astype(int)
-                pys = (n1["y"] + (n2["y"] - n1["y"]) * s_vals).astype(int)
-                
-                pxs = np.clip(pxs, 0, skeleton.shape[1] - 1)
-                pys = np.clip(pys, 0, skeleton.shape[0] - 1)
-                
-                hits = np.sum(dilated_skel[pys, pxs] > 0)
-                if (hits / steps) > 0.70:
-                    edges.append({
-                        "from": n1["id"],
-                        "to": n2["id"]
-                    })
+                # Perform LINE-OF-SIGHT TENSOR RAYCASTING validation using Bresenham
+                if edges_prob_map is not None:
+                    x0, y0 = int(n1["x"]), int(n1["y"])
+                    x1, y1 = int(n2["x"]), int(n2["y"])
+                    line_pixels = bresenham_line(x0, y0, x1, y1)
+                    
+                    sampled_probs = []
+                    h_max, w_max = edges_prob_map.shape[0] - 1, edges_prob_map.shape[1] - 1
+                    for px, py in line_pixels:
+                        sampled_px = min(max(px, 0), w_max)
+                        sampled_py = min(max(py, 0), h_max)
+                        sampled_probs.append(edges_prob_map[sampled_py, sampled_px])
+                        
+                    sampled_probs = np.array(sampled_probs)
+                    mean_prob = np.mean(sampled_probs) if len(sampled_probs) > 0 else 0.0
+                    drop_ratio = np.sum(sampled_probs < 0.2) / len(sampled_probs) if len(sampled_probs) > 0 else 1.0
+                    
+                    # THE RULE: Drop edge if average probability < 0.45 or if > 20% of pixels drop below 0.2
+                    if mean_prob < 0.45 or drop_ratio > 0.20:
+                        continue
+                else:
+                    pxs = (n1["x"] + (n2["x"] - n1["x"]) * s_vals).astype(int)
+                    pys = (n1["y"] + (n2["y"] - n1["y"]) * s_vals).astype(int)
+                    pxs = np.clip(pxs, 0, skeleton.shape[1] - 1)
+                    pys = np.clip(pys, 0, skeleton.shape[0] - 1)
+                    
+                    hits = np.sum(dilated_skel[pys, pxs] > 0)
+                    if (hits / steps) <= 0.70:
+                        continue
+                        
+                edges.append({
+                    "from": n1["id"],
+                    "to": n2["id"]
+                })
                 
         # --- ZERO-NAN COORDINATE SANITIZATION BLOCK ---
         import math
@@ -377,6 +430,20 @@ class InferencePipeline:
             u, v = edge.get("from"), edge.get("to")
             if u in valid_node_ids and v in valid_node_ids:
                 valid_edges.append(edge)
+                
+        # CLEANUP ORPHANS: Delete all floating nodes that have a degree of 0
+        import networkx as nx
+        G_temp = nx.Graph()
+        for n in valid_nodes:
+            G_temp.add_node(n["id"])
+        for e in valid_edges:
+            G_temp.add_edge(e["from"], e["to"])
+            
+        isolates = set(nx.isolates(G_temp))
+        if len(isolates) > 0:
+            valid_nodes = [n for n in valid_nodes if n["id"] not in isolates]
+            valid_node_ids = set(n["id"] for n in valid_nodes)
+            valid_edges = [e for e in valid_edges if e["from"] in valid_node_ids and e["to"] in valid_node_ids]
                 
         # Delegate post-processing cleanups to GraphEngine
         from src.graph_engine import GraphEngine
