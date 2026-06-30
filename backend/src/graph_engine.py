@@ -171,6 +171,7 @@ class GraphEngine:
         """
         if not nodes:
             return [], []
+        return nodes, []
 
         # --- 1. SPATIAL CENTROID DEDUPLICATION (NMS) USING SPATIAL INDEX ---
         # Build spatial node-snapping pass using KDTree coordinate index
@@ -237,7 +238,13 @@ class GraphEngine:
                     seen_edges.add(edge_key)
                     updated_edges.append({"from": u, "to": v})
 
-        # --- 2. ANGULAR INFRASTRUCTURE FILTERING & SHARP TURN CORRECTION ---
+        if not nodes:
+            return [], []
+            
+        if not edges:
+            return deduped_nodes, []
+            
+        import networkx as nx
         angle_g = nx.Graph()
         for node in deduped_nodes:
             angle_g.add_node(node["id"], **node)

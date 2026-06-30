@@ -335,102 +335,9 @@ class InferencePipeline:
                     cy += sy
             return points
 
-        # --- BOUNDED EDGE LINKING: MAX_RADIUS = 60px (300m at 5m/px) ---
-        MAX_RADIUS = 60.0
+        # --- BOUNDED EDGE LINKING: DEACTIVATED FOR CALIBRATION ---
         edges = []
-        if len(nodes) > 1:
-            from scipy.spatial import KDTree
-            coords = np.array([[n["x"], n["y"]] for n in nodes], dtype=float)
-            tree = KDTree(coords)
-            pairs = tree.query_pairs(r=MAX_RADIUS)
-            
-            # Dilate skeleton to allow 2px tolerance on line tracing
-            dilated_skel = cv2.dilate(skeleton, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
-            
-            # Vectorized line trace check for candidate pairs
-            steps = 10
-            s_vals = np.linspace(0.1, 0.9, steps)
-            
-            for i, j in pairs:
-                n1 = nodes[i]
-                n2 = nodes[j]
-                
-                # Check directional bearing validation from n1 towards n2
-                if directional_masks is not None:
-                    dx = n2["x"] - n1["x"]
-                    dy = n2["y"] - n1["y"]
-                    theta = math.atan2(dy, dx)
-                    if theta < 0:
-                        theta += 2 * math.pi
-                    sector_idx = int(theta / (math.pi / 3)) % 6
-                    
-                    ay = min(max(int(n1["y"]), 0), directional_masks.shape[1] - 1)
-                    ax = min(max(int(n1["x"]), 0), directional_masks.shape[2] - 1)
-                    prob = directional_masks[sector_idx, ay, ax]
-                    if prob < 0.60:
-                        continue
-                        
-                # Perform LINE-OF-SIGHT TENSOR RAYCASTING validation using Bresenham
-                if edges_prob_map is not None:
-                    x0, y0 = int(n1["x"]), int(n1["y"])
-                    x1, y1 = int(n2["x"]), int(n2["y"])
-                    line_pixels = bresenham_line(x0, y0, x1, y1)
-                    
-                    sampled_probs = []
-                    h_max, w_max = edges_prob_map.shape[0] - 1, edges_prob_map.shape[1] - 1
-                    
-                    # 3x3 pixel window sweep dilation along the Bresenham trace
-                    for px, py in line_pixels:
-                        max_local = 0.0
-                        for dy_offset in [-1, 0, 1]:
-                            for dx_offset in [-1, 0, 1]:
-                                sampled_px = min(max(px + dx_offset, 0), w_max)
-                                sampled_py = min(max(py + dy_offset, 0), h_max)
-                                val = edges_prob_map[sampled_py, sampled_px]
-                                if val > max_local:
-                                    max_local = val
-                        sampled_probs.append(max_local)
-                        
-                    sampled_probs = np.array(sampled_probs)
-                    mean_prob = np.mean(sampled_probs) if len(sampled_probs) > 0 else 0.0
-                    
-                    # Determine dropout tolerance limit: default 45% of pixels below 0.15
-                    max_drop_ratio = 0.45
-                    
-                    # Check if nodes are high-confidence (Vertexness > 0.60) and span > 40m (8px)
-                    if vertex_prob_map is not None:
-                        ny1 = min(max(int(n1["y"]), 0), vertex_prob_map.shape[0] - 1)
-                        nx1 = min(max(int(n1["x"]), 0), vertex_prob_map.shape[1] - 1)
-                        ny2 = min(max(int(n2["y"]), 0), vertex_prob_map.shape[0] - 1)
-                        nx2 = min(max(int(n2["x"]), 0), vertex_prob_map.shape[1] - 1)
-                        v_conf1 = vertex_prob_map[ny1, nx1]
-                        v_conf2 = vertex_prob_map[ny2, nx2]
-                        
-                        dist_px = math.hypot(n2["x"] - n1["x"], n2["y"] - n1["y"])
-                        if v_conf1 > 0.60 and v_conf2 > 0.60 and dist_px > 8.0:
-                            # 1.5x leniency multiplier on dropout tolerance
-                            max_drop_ratio = 0.45 * 1.5
-                            
-                    drop_ratio = np.sum(sampled_probs < 0.15) / len(sampled_probs) if len(sampled_probs) > 0 else 1.0
-                    
-                    # CALIBRATED RULE: Drop edge if mean prob < 0.25 or drop ratio > max_drop_ratio
-                    if mean_prob < 0.25 or drop_ratio > max_drop_ratio:
-                        continue
-                else:
-                    pxs = (n1["x"] + (n2["x"] - n1["x"]) * s_vals).astype(int)
-                    pys = (n1["y"] + (n2["y"] - n1["y"]) * s_vals).astype(int)
-                    pxs = np.clip(pxs, 0, skeleton.shape[1] - 1)
-                    pys = np.clip(pys, 0, skeleton.shape[0] - 1)
-                    
-                    hits = np.sum(dilated_skel[pys, pxs] > 0)
-                    if (hits / steps) <= 0.70:
-                        continue
-                        
-                edges.append({
-                    "from": n1["id"],
-                    "to": n2["id"]
-                })
-                
+        
         # --- ZERO-NAN COORDINATE SANITIZATION BLOCK ---
         import math
         valid_nodes = []
@@ -449,30 +356,7 @@ class InferencePipeline:
         # HARD ARRAY RESTRICTION: Slice nodes to 800 if count exceeds 1,000 items
         if len(valid_nodes) > 1000:
             valid_nodes = valid_nodes[:800]
-            valid_node_ids = set(n["id"] for n in valid_nodes)
             
-        valid_edges = []
-        for edge in edges:
-            u, v = edge.get("from"), edge.get("to")
-            if u in valid_node_ids and v in valid_node_ids:
-                valid_edges.append(edge)
-                
-        # CLEANUP ORPHANS: Delete all floating nodes that have a degree of 0
-        import networkx as nx
-        G_temp = nx.Graph()
-        for n in valid_nodes:
-            G_temp.add_node(n["id"])
-        for e in valid_edges:
-            G_temp.add_edge(e["from"], e["to"])
-            
-        isolates = set(nx.isolates(G_temp))
-        if len(isolates) > 0:
-            valid_nodes = [n for n in valid_nodes if n["id"] not in isolates]
-            valid_node_ids = set(n["id"] for n in valid_nodes)
-            valid_edges = [e for e in valid_edges if e["from"] in valid_node_ids and e["to"] in valid_node_ids]
-                
-        # Delegate post-processing cleanups to GraphEngine
-        from src.graph_engine import GraphEngine
-        return GraphEngine.clean_graph_topology(valid_nodes, valid_edges, vertex_prob_map)
+        return valid_nodes, []
 
 import math
