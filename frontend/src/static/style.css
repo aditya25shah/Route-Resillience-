@@ -1,3 +1,9 @@
+/* Absolute black CSS override */
+html, body, [data-testid="stAppViewContainer"] {
+    background-color: #000000 !important;
+    color: #ffffff !important;
+}
+
 /* Design System Tokens - Strict Monochromatic Engineering Aesthetics */
 :root {
     --bg-main: #000000;

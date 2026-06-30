@@ -1,3 +1,10 @@
+// Map Configuration Block
+const mapConfig = {
+    preferCanvas: true,
+    radius: 2.0,
+    weight: 1.0
+};
+
 // Global App Viewport & Pan-Zoom State
 let zoomScale = 1.0;
 let panX = 0.0;
@@ -529,7 +536,7 @@ function render() {
     
     // 3. Draw Extracted Graph Overlay
     if (showGraph) {
-        const edgeWidth = 1.5;
+        const edgeWidth = mapConfig.weight;
         const routeActive = (currentMode === "route" && routePoints.length === 2 && activeShortestPath);
         
         // Draw Edges
@@ -609,8 +616,8 @@ function render() {
             ctx.restore();
         }
         
-        // Draw Nodes: fixed screen-pixel non-scaling dots (radius=2.5) to fix giant white blobs
-        const innerRadius = 2.5;
+        // Draw Nodes: fixed screen-pixel non-scaling dots (radius=2.0) to fix giant white blobs
+        const innerRadius = mapConfig.radius;
         const outerRadius = 0;
         const outerLineWidth = 0;
         

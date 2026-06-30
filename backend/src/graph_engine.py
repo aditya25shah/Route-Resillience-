@@ -456,4 +456,32 @@ class GraphEngine:
                 "to": id_map[v]
             })
             
-        return final_nodes, final_edges
+        # --- SECTION 5: STRICT ZERO-NAN VECTOR VALIDATION AND BOUNDS SCAN ---
+        import math
+        sanitized_nodes = []
+        valid_node_ids = set()
+        for node in final_nodes:
+            x = node.get("x")
+            y = node.get("y")
+            if x is None or y is None:
+                continue
+            try:
+                xf = float(x)
+                yf = float(y)
+            except (ValueError, TypeError):
+                continue
+            if math.isnan(xf) or math.isinf(xf) or math.isnan(yf) or math.isinf(yf):
+                continue
+            if xf < 0.0 or xf > 1024.0 or yf < 0.0 or yf > 1024.0:
+                continue
+            sanitized_nodes.append(node)
+            valid_node_ids.add(node["id"])
+            
+        sanitized_edges = []
+        for edge in final_edges:
+            u = edge.get("from")
+            v = edge.get("to")
+            if u in valid_node_ids and v in valid_node_ids:
+                sanitized_edges.append(edge)
+                
+        return sanitized_nodes, sanitized_edges
