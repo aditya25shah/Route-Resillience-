@@ -70,16 +70,50 @@ class GraphEngine:
         # 2. APLS Score simulation (Average Path Length Similarity)
         # Compute path similarity ratio of disrupted / intact graph
         apls_score = 1.0
+        
+        def estimate_average_shortest_path_length(G, sample_size=50):
+            if len(G.nodes) <= 1:
+                return 0.0
+            nodes = list(G.nodes)
+            import random
+            state = random.getstate()
+            random.seed(42)
+            
+            if len(G.nodes) < 150:
+                try:
+                    res = nx.average_shortest_path_length(G)
+                    random.setstate(state)
+                    return res
+                except Exception:
+                    random.setstate(state)
+                    return 0.0
+                    
+            total_path_len = 0.0
+            successful_paths = 0
+            
+            sampled_sources = random.sample(nodes, min(len(nodes), sample_size))
+            for source in sampled_sources:
+                lengths = nx.single_source_shortest_path_length(G, source)
+                for target, length in lengths.items():
+                    if target != source:
+                        total_path_len += length
+                        successful_paths += 1
+                        
+            random.setstate(state)
+            if successful_paths > 0:
+                return total_path_len / successful_paths
+            return 0.0
+
         try:
             # Get largest component average path length
             if len(G_disrupted.nodes) > 1:
                 largest_cc_disrupted = max(nx.connected_components(G_disrupted), key=len)
                 sub_disrupted = G_disrupted.subgraph(largest_cc_disrupted)
-                avg_path_disrupted = nx.average_shortest_path_length(sub_disrupted)
+                avg_path_disrupted = estimate_average_shortest_path_length(sub_disrupted)
                 
                 largest_cc_intact = max(nx.connected_components(G_intact), key=len)
                 sub_intact = G_intact.subgraph(largest_cc_intact)
-                avg_path_intact = nx.average_shortest_path_length(sub_intact)
+                avg_path_intact = estimate_average_shortest_path_length(sub_intact)
                 
                 if avg_path_disrupted > 0:
                     apls_score = round(avg_path_intact / avg_path_disrupted, 3)

@@ -27,6 +27,8 @@ pipeline = InferencePipeline(weights_path=weights_path)
 
 class InferenceRequest(BaseModel):
     image: str # Base64 encoded image string
+    is_sar: Optional[bool] = False
+    cloud_cover: Optional[bool] = False
 
 class CoordinateNode(BaseModel):
     id: int
@@ -73,7 +75,7 @@ def perform_inference(req: InferenceRequest):
         
     try:
         # Run inference and topology extraction
-        nodes, edges = pipeline.run_inference(image)
+        nodes, edges = pipeline.run_inference(image, is_sar=req.is_sar, cloud_cover=req.cloud_cover)
         
         # Clean graph topology
         nodes, edges = GraphEngine.clean_graph_topology(nodes, edges)

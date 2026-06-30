@@ -201,22 +201,29 @@ function triggerInferencePipeline(imgDataSrc) {
     
     let stageTimer = setTimeout(() => {
         if (isLoading && loadingStep) {
-            loadingStep.textContent = "Stage 2: EXECUTING SAT2GRAPH INFERENCE...";
+            loadingStep.textContent = "Stage 2: EXECUTING CROSS-MODAL INFERENCE...";
             if (progressBarFill) progressBarFill.style.width = "40%";
         }
     }, 1000);
     
     let stageTimer2 = setTimeout(() => {
         if (isLoading && loadingStep) {
-            loadingStep.textContent = "Stage 3: APPLYING TOPOLOGICAL FILTERS...";
+            loadingStep.textContent = "Stage 3: APPLYING ANGLE-PRUNING FILTERS...";
             if (progressBarFill) progressBarFill.style.width = "75%";
         }
     }, 2500);
     
+    const isSarChecked = document.getElementById("chkSar") ? document.getElementById("chkSar").checked : false;
+    const isCloudChecked = document.getElementById("chkCloud") ? document.getElementById("chkCloud").checked : false;
+    
     fetch("/api/infer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: imgDataSrc })
+        body: JSON.stringify({
+            image: imgDataSrc,
+            is_sar: isSarChecked || isCloudChecked,
+            cloud_cover: isCloudChecked
+        })
     })
     .then(response => {
         isLoading = false;
@@ -522,7 +529,7 @@ function render() {
     
     // 3. Draw Extracted Graph Overlay
     if (showGraph) {
-        const edgeWidth = Math.max(0.4, 1.5 / Math.sqrt(zoomScale));
+        const edgeWidth = 1.5;
         const routeActive = (currentMode === "route" && routePoints.length === 2 && activeShortestPath);
         
         // Draw Edges
@@ -602,10 +609,10 @@ function render() {
             ctx.restore();
         }
         
-        // Draw Nodes
-        const innerRadius = Math.max(1.5, 4.0 / Math.sqrt(zoomScale));
-        const outerRadius = Math.max(2.5, 7.0 / Math.sqrt(zoomScale));
-        const outerLineWidth = Math.max(0.4, 1.0 / Math.sqrt(zoomScale));
+        // Draw Nodes: fixed screen-pixel non-scaling dots (radius=2.5) to fix giant white blobs
+        const innerRadius = 2.5;
+        const outerRadius = 0;
+        const outerLineWidth = 0;
         
         activeGraph.nodes.forEach(node => {
             const p = getScaledCoords(node);
