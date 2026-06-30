@@ -457,7 +457,6 @@ class GraphEngine:
             })
             
         # --- SECTION 5: STRICT ZERO-NAN VECTOR VALIDATION AND BOUNDS SCAN ---
-        import math
         sanitized_nodes = []
         valid_node_ids = set()
         for node in final_nodes:

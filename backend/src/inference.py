@@ -317,8 +317,29 @@ class InferencePipeline:
                         "to": n2["id"]
                     })
                 
+        # --- ZERO-NAN COORDINATE SANITIZATION BLOCK ---
+        import math
+        valid_nodes = []
+        valid_node_ids = set()
+        for node in nodes:
+            x, y = node.get("x"), node.get("y")
+            if x is None or y is None:
+                continue
+            if math.isnan(x) or math.isinf(x) or math.isnan(y) or math.isinf(y):
+                continue
+            if x < 0 or x > 1024 or y < 0 or y > 1024:
+                continue
+            valid_nodes.append(node)
+            valid_node_ids.add(node["id"])
+            
+        valid_edges = []
+        for edge in edges:
+            u, v = edge.get("from"), edge.get("to")
+            if u in valid_node_ids and v in valid_node_ids:
+                valid_edges.append(edge)
+                
         # Delegate post-processing cleanups to GraphEngine
         from src.graph_engine import GraphEngine
-        return GraphEngine.clean_graph_topology(nodes, edges, vertex_prob_map)
+        return GraphEngine.clean_graph_topology(valid_nodes, valid_edges, vertex_prob_map)
 
 import math
