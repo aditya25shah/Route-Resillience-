@@ -78,6 +78,22 @@ async def proxy_route_plan(request: Request):
         except httpx.HTTPError as e:
             raise HTTPException(status_code=502, detail=f"Route planning gateway error: {e}")
 
+@app.get("/api/diagnostics")
+async def get_diagnostics():
+    """
+    Proxies diagnostic health check queries directly to the backend.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(f"{BACKEND_URL}/api/diagnostics")
+            return resp.json()
+        except httpx.HTTPError as e:
+            return {
+                "status": "ERROR",
+                "message": f"Diagnostics gateway error: {e}",
+                "errors": [str(e)]
+            }
+
 # Mount static web directory
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):

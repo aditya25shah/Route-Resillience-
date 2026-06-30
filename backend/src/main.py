@@ -168,3 +168,115 @@ def route_plan(req: RoutePlanRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Route planning error: {e}")
+
+@app.get("/api/diagnostics")
+def system_diagnostics():
+    """
+    Runs self-testing diagnostic scans on the weights file, model load status,
+    and performs a synthetic mock inference iteration. Returns a comprehensive
+    system health and troubleshooting report.
+    """
+    import time
+    import hashlib
+    import traceback
+    
+    report = {
+        "timestamp": time.time(),
+        "status": "OK",
+        "checks": {},
+        "errors": []
+    }
+    
+    # 1. Check Weights file
+    t0 = time.time()
+    w_path = os.getenv("WEIGHTS_PATH", "backend/weights/sat2graph_weights.pth")
+    report["checks"]["weights_path_env"] = w_path
+    
+    # Resolve actual file path
+    possible_paths = [
+        w_path,
+        "backend/weights/sat2graph_weights.pth",
+        "../backend/weights/sat2graph_weights.pth",
+        "data/20citiesModel/model.ckpt",
+        "../data/20citiesModel/model.ckpt"
+    ]
+    resolved_path = None
+    for p in possible_paths:
+        if p and os.path.exists(p):
+            resolved_path = p
+            break
+            
+    if resolved_path:
+        report["checks"]["weights_file_exists"] = True
+        report["checks"]["weights_file_resolved"] = resolved_path
+        size_bytes = os.path.getsize(resolved_path)
+        report["checks"]["weights_file_size_bytes"] = size_bytes
+        
+        # Check checksum signature
+        try:
+            with open(resolved_path, "rb") as f:
+                checksum = hashlib.sha256(f.read()).hexdigest()
+            report["checks"]["weights_file_sha256"] = checksum
+            expected_hash = "bfa5500962446da0353bbea9129d089361ca025c6e3c5c8c26516b3b3bf14525"
+            if checksum == expected_hash:
+                report["checks"]["weights_integrity"] = "VALID"
+            else:
+                report["checks"]["weights_integrity"] = "CORRUPTED_SIGNATURE_MISMATCH"
+                report["errors"].append("Weights checksum does not match expected signature.")
+                report["status"] = "DEGRADED"
+        except Exception as hash_err:
+            report["checks"]["weights_integrity"] = "READ_ERROR"
+            report["errors"].append(f"Weights integrity check failed: {hash_err}")
+            report["status"] = "DEGRADED"
+    else:
+        report["checks"]["weights_file_exists"] = False
+        report["errors"].append("Weights file not found in any standard path.")
+        report["status"] = "ERROR"
+        
+    report["checks"]["weights_check_elapsed_sec"] = time.time() - t0
+    
+    # 2. Check pipeline initialization
+    report["checks"]["pipeline_initialized"] = (pipeline is not None)
+    if pipeline:
+        report["checks"]["pipeline_device"] = str(pipeline.device)
+        report["checks"]["pipeline_model_loaded"] = (pipeline.model is not None)
+        
+    # 3. Perform synthetic end-to-end trace mock run
+    if pipeline and pipeline.model is not None:
+        try:
+            t_test = time.time()
+            # Generate a simple synthetic 100x100 RGB image with a cross grid
+            import numpy as np
+            from PIL import Image
+            grid_img = np.zeros((100, 100, 3), dtype=np.uint8)
+            grid_img[50, :, :] = 255
+            grid_img[:, 50, :] = 255
+            pil_test = Image.fromarray(grid_img)
+            
+            # Execute inference
+            raw_nodes, raw_edges = pipeline.run_inference(pil_test)
+            clean_nodes, clean_edges = GraphEngine.clean_graph_topology(raw_nodes, raw_edges)
+            metrics = GraphEngine.compute_resilience_metrics(clean_nodes, clean_edges)
+            
+            report["checks"]["synthetic_inference"] = {
+                "success": True,
+                "elapsed_sec": time.time() - t_test,
+                "raw_nodes": len(raw_nodes),
+                "raw_edges": len(raw_edges),
+                "clean_nodes": len(clean_nodes),
+                "clean_edges": len(clean_edges),
+                "metrics": metrics
+            }
+        except Exception as test_err:
+            report["status"] = "ERROR"
+            report["checks"]["synthetic_inference"] = {
+                "success": False,
+                "error": str(test_err)
+            }
+            report["errors"].append({
+                "stage": "Synthetic inference pipeline execution",
+                "message": str(test_err),
+                "traceback": traceback.format_exc()
+            })
+            
+    return report
