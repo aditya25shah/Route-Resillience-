@@ -1,7 +1,7 @@
 // Map Configuration Block
 const mapConfig = {
     preferCanvas: true,
-    radius: 2.0,
+    radius: 1.5,
     weight: 1.0
 };
 
@@ -624,9 +624,6 @@ function render() {
         activeGraph.nodes.forEach(node => {
             const p = getScaledCoords(node);
             
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, innerRadius, 0, 2 * Math.PI);
-            
             let color = "#ffffff";
             let strokeColor = "rgba(255, 255, 255, 0.2)";
             let glow = false;
@@ -635,8 +632,8 @@ function render() {
             if (routeActive) {
                 if (onPath || routePoints.includes(node.id)) {
                     if (blockedNodes.has(node.id)) {
-                        color = "#000000";
-                        strokeColor = "#ffffff";
+                        color = "#ff0000";
+                        strokeColor = "#ff0000";
                     } else if (routePoints.includes(node.id)) {
                         color = "#ffffff";
                         strokeColor = "#ffffff";
@@ -646,14 +643,13 @@ function render() {
                         strokeColor = "rgba(255, 255, 255, 0.5)";
                     }
                 } else {
-                    // Muted background node: slate-grey (#333333)
                     color = "#333333";
                     strokeColor = "rgba(51, 51, 51, 0.5)";
                 }
             } else {
                 if (blockedNodes.has(node.id)) {
-                    color = "#000000";
-                    strokeColor = "#ffffff";
+                    color = "#ff0000";
+                    strokeColor = "#ff0000";
                 } else if (currentMode === "route" && routePoints.includes(node.id)) {
                     color = "#ffffff";
                     strokeColor = "#ffffff";
@@ -665,23 +661,20 @@ function render() {
                 }
             }
             
-            ctx.fillStyle = color;
+            // Draw perimeter circle outline with zero fill (stroke only)
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, innerRadius, 0, 2 * Math.PI);
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = 1.0;
             if (glow) {
                 ctx.save();
-                ctx.shadowColor = color;
+                ctx.shadowColor = strokeColor;
                 ctx.shadowBlur = Math.max(2.0, 8 / Math.sqrt(zoomScale));
-                ctx.fill();
+                ctx.stroke();
                 ctx.restore();
             } else {
-                ctx.fill();
+                ctx.stroke();
             }
-            
-            // Outer ring
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, outerRadius, 0, 2 * Math.PI);
-            ctx.strokeStyle = strokeColor;
-            ctx.lineWidth = outerLineWidth;
-            ctx.stroke();
         });
         
         // --- 4. MINIMALIST HUD METRIC OVERLAY ---

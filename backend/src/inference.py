@@ -243,9 +243,9 @@ class InferencePipeline:
         
         nodes_raw = list(zip(junction_x, junction_y)) + list(zip(term_x, term_y))
         
-        # --- SPATIAL DEDUPLICATION: O(N) Grid-snap nodes within 12px radius ---
+        # --- SPATIAL DEDUPLICATION: O(N) Grid-snap nodes within 24px radius ---
         grid = {}
-        grid_size = 12
+        grid_size = 24
         nodes = []
         node_id = 1
         node_lookup = {}
@@ -339,6 +339,11 @@ class InferencePipeline:
                 continue
             valid_nodes.append(node)
             valid_node_ids.add(node["id"])
+            
+        # HARD ARRAY RESTRICTION: Slice nodes to 800 if count exceeds 1,000 items
+        if len(valid_nodes) > 1000:
+            valid_nodes = valid_nodes[:800]
+            valid_node_ids = set(n["id"] for n in valid_nodes)
             
         valid_edges = []
         for edge in edges:
