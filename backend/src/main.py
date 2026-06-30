@@ -167,6 +167,8 @@ def route_plan(req: RoutePlanRequest):
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Route planning error: {e}")
 
 @app.get("/api/diagnostics")

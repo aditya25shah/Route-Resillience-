@@ -217,16 +217,28 @@ class InferencePipeline:
             nodes_mean = nodes_mask.squeeze(0).mean(dim=0).cpu().numpy()
             nodes_resized = cv2.resize(nodes_mean, (target_w, target_h))
             
-            return self._extract_graph_from_mask(img_resized, mask_resized, vertex_prob_map=nodes_resized)
+            # Get the first 6 channels of edges_mask as directional probability maps
+            edges_directional = edges_mask.squeeze(0)[:6, :, :].cpu().numpy()
+            
+            # Rescale each of the 6 channels to 800x600 using cv2.resize
+            directional_resized = np.zeros((6, target_h, target_w), dtype=float)
+            for ch in range(6):
+                directional_resized[ch] = cv2.resize(edges_directional[ch], (target_w, target_h))
+                
+            return self._extract_graph_from_mask(img_resized, mask_resized, vertex_prob_map=nodes_resized, directional_masks=directional_resized)
         except Exception as e:
             import sys
             print(f"[FATAL ERROR] Live PyTorch inference failure: {e}", file=sys.stderr)
             sys.exit(1)
 
-    def _extract_graph_from_mask(self, original_img, binary_mask, vertex_prob_map=None):
+    def _extract_graph_from_mask(self, original_img, binary_mask, vertex_prob_map=None, directional_masks=None):
         """
         Parses binary GTE/structural segmentation masks to extract nodes and edges.
         """
+        import cv2
+        import math
+        import numpy as np
+        from skimage.morphology import skeletonize
         bool_mask = binary_mask > 127
         skeleton = skeletonize(bool_mask).astype(np.uint8) * 255
         
@@ -312,6 +324,21 @@ class InferencePipeline:
                 n1 = nodes[i]
                 n2 = nodes[j]
                 
+                # Check directional bearing validation from n1 towards n2
+                if directional_masks is not None:
+                    dx = n2["x"] - n1["x"]
+                    dy = n2["y"] - n1["y"]
+                    theta = math.atan2(dy, dx)
+                    if theta < 0:
+                        theta += 2 * math.pi
+                    sector_idx = int(theta / (math.pi / 3)) % 6
+                    
+                    ay = min(max(int(n1["y"]), 0), directional_masks.shape[1] - 1)
+                    ax = min(max(int(n1["x"]), 0), directional_masks.shape[2] - 1)
+                    prob = directional_masks[sector_idx, ay, ax]
+                    if prob < 0.60:
+                        continue
+                        
                 pxs = (n1["x"] + (n2["x"] - n1["x"]) * s_vals).astype(int)
                 pys = (n1["y"] + (n2["y"] - n1["y"]) * s_vals).astype(int)
                 

@@ -208,14 +208,14 @@ function triggerInferencePipeline(imgDataSrc) {
     
     let stageTimer = setTimeout(() => {
         if (isLoading && loadingStep) {
-            loadingStep.textContent = "Stage 2: EXECUTING CROSS-MODAL INFERENCE...";
+            loadingStep.textContent = "Stage 2: EXECUTING CROSS-MODAL SAR INVERSION...";
             if (progressBarFill) progressBarFill.style.width = "40%";
         }
     }, 1000);
     
     let stageTimer2 = setTimeout(() => {
         if (isLoading && loadingStep) {
-            loadingStep.textContent = "Stage 3: APPLYING ANGLE-PRUNING FILTERS...";
+            loadingStep.textContent = "Stage 3: CONNECTING TRANS-SEGMENT BRIDGE EDGES...";
             if (progressBarFill) progressBarFill.style.width = "75%";
         }
     }, 2500);

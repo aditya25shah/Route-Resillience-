@@ -306,7 +306,7 @@ class GraphEngine:
                 nodes_to_remove.update(comp)
         angle_g.remove_nodes_from(nodes_to_remove)
 
-        # --- 3b. DEAD-END PRUNING (strip dead-ends < 30 meters) ---
+        # --- 3. ITERATIVE LOOP DEAD-END PRUNING ---
         pruned = True
         while pruned:
             pruned = False
@@ -350,62 +350,72 @@ class GraphEngine:
                     if pruned:
                         break
             
-        # --- 4. COLLINEAR PATH CONSOLIDATION (GAP BRIDGING) ---
-        # Find all degree-1 nodes
+        # --- 4. AUTOMATED TRANS-SEGMENT EDGE HEALING (Healed Bridge Edges) ---
         deg1_nodes = [n for n in angle_g.nodes() if angle_g.degree(n) == 1]
-        new_bridges = []
+        trajectories = {}
+        for leaf in deg1_nodes:
+            neighbors = list(angle_g.neighbors(leaf))
+            if len(neighbors) == 1:
+                nbr = neighbors[0]
+                dx = angle_g.nodes[leaf]["x"] - angle_g.nodes[nbr]["x"]
+                dy = angle_g.nodes[leaf]["y"] - angle_g.nodes[nbr]["y"]
+                mag = math.hypot(dx, dy)
+                if mag > 0:
+                    trajectories[leaf] = (dx / mag, dy / mag)
+                else:
+                    trajectories[leaf] = (0.0, 0.0)
+                    
+        components = list(nx.connected_components(angle_g))
+        comp_map = {}
+        for idx_comp, comp in enumerate(components):
+            for node in comp:
+                comp_map[node] = idx_comp
+                
+        new_bridge_edges = []
         for i in range(len(deg1_nodes)):
-            n1_id = deg1_nodes[i]
+            u = deg1_nodes[i]
+            if u not in trajectories:
+                continue
+            ux, uy = angle_g.nodes[u]["x"], angle_g.nodes[u]["y"]
+            u_dir = trajectories[u]
+            
             for j in range(i + 1, len(deg1_nodes)):
-                n2_id = deg1_nodes[j]
+                w = deg1_nodes[j]
+                if w not in trajectories:
+                    continue
+                # Only heal if they belong to different components (disconnected)
+                if comp_map[u] == comp_map[w]:
+                    continue
+                    
+                wx, wy = angle_g.nodes[w]["x"], angle_g.nodes[w]["y"]
+                w_dir = trajectories[w]
                 
-                n1 = angle_g.nodes[n1_id]
-                n2 = angle_g.nodes[n2_id]
+                # Gap under 60 meters (12 pixels)
+                dx = wx - ux
+                dy = wy - uy
+                gap_dist = math.hypot(dx, dy)
+                if gap_dist > 12.0 or gap_dist == 0:
+                    continue
+                    
+                # Vector from u to w (normalized)
+                v_uw = (dx / gap_dist, dy / gap_dist)
+                # Vector from w to u (normalized)
+                v_wu = (-dx / gap_dist, -dy / gap_dist)
                 
-                # Spatial distance between them in meters
-                dist_m = math.hypot(n1["x"] - n2["x"], n1["y"] - n2["y"]) * 5.0
-                if dist_m < 25.0: # Less than 25 meters gap
-                    # Get neighbors
-                    neigh1 = list(angle_g.neighbors(n1_id))[0]
-                    neigh2 = list(angle_g.neighbors(n2_id))[0]
+                # Check if u points towards w
+                dot_u = u_dir[0] * v_uw[0] + u_dir[1] * v_uw[1]
+                # Check if w points towards u
+                dot_w = w_dir[0] * v_wu[0] + w_dir[1] * v_wu[1]
+                
+                # 30 degrees tolerance (cos(30) = 0.866)
+                if dot_u > 0.866 and dot_w > 0.866:
+                    new_bridge_edges.append((u, w, gap_dist))
                     
-                    n1_prev = angle_g.nodes[neigh1]
-                    n2_prev = angle_g.nodes[neigh2]
-                    
-                    # Vector for segment 1: from prev to n1
-                    v1_x, v1_y = n1["x"] - n1_prev["x"], n1["y"] - n1_prev["y"]
-                    # Vector for segment 2: from prev to n2
-                    v2_x, v2_y = n2["x"] - n2_prev["x"], n2["y"] - n2_prev["y"]
-                    # Vector for gap: from n1 to n2
-                    gap_x, gap_y = n2["x"] - n1["x"], n2["y"] - n1["y"]
-                    
-                    mag_v1 = math.hypot(v1_x, v1_y)
-                    mag_v2 = math.hypot(v2_x, v2_y)
-                    mag_gap = math.hypot(gap_x, gap_y)
-                    
-                    if mag_v1 > 0 and mag_v2 > 0 and mag_gap > 0:
-                        # Angle between v1 and gap
-                        dot1 = v1_x * gap_x + v1_y * gap_y
-                        cos1 = max(-1.0, min(1.0, dot1 / (mag_v1 * mag_gap)))
-                        angle1 = math.degrees(math.acos(cos1))
-                        
-                        # Angle between v2 and gap
-                        dot2 = v2_x * gap_x + v2_y * gap_y
-                        cos2 = max(-1.0, min(1.0, dot2 / (mag_v2 * mag_gap)))
-                        angle2 = math.degrees(math.acos(cos2))
-                        
-                        # Directional angle deviation under 15 degrees
-                        if angle1 < 15.0 and angle2 < 15.0:
-                            new_bridges.append((n1_id, n2_id))
-                            
-        for u, v in new_bridges:
-            if not angle_g.has_edge(u, v):
-                n1 = angle_g.nodes[u]
-                n2 = angle_g.nodes[v]
-                dist = math.hypot(n1["x"] - n2["x"], n1["y"] - n2["y"])
-                angle_g.add_edge(u, v, weight=dist)
+        for u, w, d in new_bridge_edges:
+            if not angle_g.has_edge(u, w):
+                angle_g.add_edge(u, w, weight=d, healed_bridge=True)
 
-        # --- 5. HORIZONTAL/VERTICAL GRID DE-NOISING (INTERMEDIATE NODE PRUNING) ---
+        # --- 5. COLINESR ARTERIAL CONSOLIDATION ---
         pruned_deg2 = True
         while pruned_deg2:
             pruned_deg2 = False
