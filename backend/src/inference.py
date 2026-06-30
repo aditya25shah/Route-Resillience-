@@ -192,6 +192,16 @@ class InferencePipeline:
             img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2RGB)
             
         h, w = img_np.shape[:2]
+        
+        # Verify and downsample spatial resolution to mimic optimal GSD (50cm/pixel)
+        if h > 1024 or w > 1024:
+            min_dim = min(h, w)
+            start_x = (w - min_dim) // 2
+            start_y = (h - min_dim) // 2
+            img_np = img_np[start_y:start_y+min_dim, start_x:start_x+min_dim]
+            img_np = cv2.resize(img_np, (1024, 1024), interpolation=cv2.INTER_AREA)
+            h, w = img_np.shape[:2]
+            
         target_w, target_h = 800, 600
         img_resized = cv2.resize(img_np, (target_w, target_h))
         

@@ -32,7 +32,7 @@ async def proxy_infer(request: Request):
             "host", "content-length", "connection", "keep-alive", "proxy-connection", "transfer-encoding"
         ]}
         
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=75.0) as client:
             try:
                 resp = await client.post(f"{BACKEND_URL}/api/infer", content=body, headers=headers)
                 return resp.json()
