@@ -9,6 +9,7 @@ import os
 
 from src.inference import InferencePipeline
 from src.graph_engine import GraphEngine
+import networkx as nx
 
 app = FastAPI(title="Route Resilience Analytics Backend", version="1.0.0")
 
