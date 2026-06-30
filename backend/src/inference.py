@@ -155,11 +155,19 @@ class InferencePipeline:
             self.model.load_state_dict(torch.load(self.weights_path, map_location=self.device), strict=False)
             
             # Wrap core inference model with torch.compile to enable low-latency tracing
-            # Using backend="eager" ensures compatibility without requiring cl.exe MSVC compiler dependencies
             if hasattr(torch, "compile"):
                 try:
                     self.model = torch.compile(self.model, backend="eager")
                     print("[INFO] PyTorch 2.x native compilation successfully applied with eager JIT backend.")
+                    
+                    # Execute JIT compiler warm-up pass
+                    import time
+                    print("[INFO] Executing PyTorch JIT compiler warm-up pass...")
+                    t_warm = time.time()
+                    dummy_in = torch.zeros(1, 3, 600, 800).to(self.device)
+                    with torch.no_grad():
+                        _, _ = self.model(dummy_in)
+                    print(f"[INFO] PyTorch JIT compiler warm-up completed in {round(time.time() - t_warm, 2)}s.")
                 except Exception as compile_err:
                     print(f"[WARNING] torch.compile wrapper initialization failed: {compile_err}")
             

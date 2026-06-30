@@ -71,7 +71,7 @@ class GraphEngine:
         # Compute path similarity ratio of disrupted / intact graph
         apls_score = 1.0
         
-        def estimate_average_shortest_path_length(G, sample_size=50):
+        def estimate_average_shortest_path_length(G, sample_size=25):
             if len(G.nodes) <= 1:
                 return 0.0
             nodes = list(G.nodes)
@@ -79,7 +79,7 @@ class GraphEngine:
             state = random.getstate()
             random.seed(42)
             
-            if len(G.nodes) < 150:
+            if len(G.nodes) < 15:
                 try:
                     res = nx.average_shortest_path_length(G)
                     random.setstate(state)
